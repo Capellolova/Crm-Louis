@@ -509,18 +509,18 @@ def page_actions_du_jour():
     overdue = affaires[
         (affaires["date_prochaine_action"].notna()) &
         (affaires["date_prochaine_action"] < today) &
-        (~affaires["statut"].isin(list(STATUTS_CLOTURES)))
+        (affaires["statut"] != "Perdu")
     ].copy()
 
     due_today = affaires[
         (affaires["date_prochaine_action"] == today) &
-        (~affaires["statut"].isin(list(STATUTS_CLOTURES)))
+        (affaires["statut"] != "Perdu")
     ].copy()
 
     upcoming = affaires[
         (affaires["date_prochaine_action"].notna()) &
         (affaires["date_prochaine_action"] > today) &
-        (~affaires["statut"].isin(list(STATUTS_CLOTURES)))
+        (affaires["statut"] != "Perdu")
     ].copy().sort_values("date_prochaine_action")
 
     c1, c2, c3 = st.columns(3)
