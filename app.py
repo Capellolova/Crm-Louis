@@ -284,6 +284,39 @@ def parse_int(v):
         return None
 
 
+
+
+def coerce_int(v, default=0):
+    try:
+        parsed = parse_int(v)
+        return int(parsed) if parsed is not None else default
+    except Exception:
+        return default
+
+
+def coerce_float(v, default=0.0):
+    try:
+        parsed = parse_float(v)
+        return float(parsed) if parsed is not None else default
+    except Exception:
+        return default
+
+
+def coerce_date(v, default=None):
+    if default is None:
+        default = date.today()
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    if v in (None, '', 'None'):
+        return default
+    try:
+        return pd.to_datetime(v).date()
+    except Exception:
+        return default
+
+
 def normalize_status(status):
     mapping = {
         'Faire Proposition': 'Faire proposition',
@@ -776,7 +809,7 @@ def page_affairs():
                         client_idx = int(match_positions[0])
                 client_name = st.selectbox('Client lié', client_options, index=client_idx, disabled=clients.empty)
                 priority = st.selectbox('Priorité', PRIORITIES, index=safe_index(PRIORITIES, current.get('priority'), 1))
-                created_on = st.date_input('Date de création', value=current.get('created_on') or date.today())
+                created_on = st.date_input('Date de création', value=coerce_date(current.get('created_on')))
                 assigned_to = st.text_input('Commercial assigné', value=current.get('assigned_to') or 'Louis')
                 opportunity_type = st.selectbox('Type opportunité', TYPE_OPPS, index=safe_index(TYPE_OPPS, current.get('opportunity_type'), 0))
             with c2:
@@ -786,21 +819,21 @@ def page_affairs():
                 energy = st.selectbox('Énergie', ENERGIES, index=safe_index(ENERGIES, current.get('energy'), 0))
             with c3:
                 vn_parc = st.text_input('VN / Parc', value=current.get('vn_parc') or '')
-                duration_months = st.number_input('Durée (mois)', min_value=0, step=1, value=int(current.get('duration_months') or 0))
-                annual_km = st.number_input('Km/an', min_value=0, step=1000, value=int(current.get('annual_km') or 0))
-                monthly_rent = st.number_input('Loyer mensuel €', min_value=0.0, step=10.0, value=float(current.get('monthly_rent') or 0.0))
+                duration_months = st.number_input('Durée (mois)', min_value=0, step=1, value=coerce_int(current.get('duration_months'), 0))
+                annual_km = st.number_input('Km/an', min_value=0, step=1000, value=coerce_int(current.get('annual_km'), 0))
+                monthly_rent = st.number_input('Loyer mensuel €', min_value=0.0, step=10.0, value=coerce_float(current.get('monthly_rent'), 0.0))
             s1, s2, s3 = st.columns(3)
             with s1:
                 status = st.selectbox('Statut', STATUSES, index=STATUSES.index(current.get('status')) if current.get('status') in STATUSES else 0)
-                proposal_sent_on = st.date_input('Date envoi proposition', value=current.get('proposal_sent_on') or date.today())
-                next_action_date = st.date_input('Date prochaine action', value=current.get('next_action_date') or date.today())
+                proposal_sent_on = st.date_input('Date envoi proposition', value=coerce_date(current.get('proposal_sent_on')))
+                next_action_date = st.date_input('Date prochaine action', value=coerce_date(current.get('next_action_date')))
             with s2:
                 next_action = st.selectbox('Action suivante', ACTIONS, index=ACTIONS.index(current.get('next_action')) if current.get('next_action') in ACTIONS else 0)
                 blockage = st.selectbox('Blocage principal', BLOCKAGES, index=BLOCKAGES.index(current.get('blockage')) if current.get('blockage') in BLOCKAGES else 0)
                 competitor = st.text_input('Concurrent', value=current.get('competitor') or '')
             with s3:
                 contract_ref = st.text_input('Contrat / BDC', value=current.get('contract_ref') or '')
-                ao_deadline = st.date_input('Deadline AO', value=current.get('ao_deadline') or date.today())
+                ao_deadline = st.date_input('Deadline AO', value=coerce_date(current.get('ao_deadline')))
             comments = st.text_area('Commentaires', value=current.get('comments') or '')
             submitted = st.form_submit_button('Enregistrer l’affaire')
             if submitted:
