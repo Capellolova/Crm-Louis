@@ -35,6 +35,7 @@ STATUSES = [
 
 PRIORITIES = ['🔥 Chaud', '⚠️ À suivre', '🧊 Froid']
 TYPE_OPPS = ['Prospect', 'Client existant', 'Renouvellement', 'AO / SAD']
+CATEGORIES = ['VHL', 'VUL', '3.5T', '5.2T', '10T', '16T', 'Frigo']
 GAMMES = ['GL', 'VU', 'REM']
 CARROSSERIES = ['FRIGO', 'HYDRAU', 'SEC', 'TRR', 'AUTRE']
 ENERGIES = ['B7', 'B100', 'B100 FLEXIBLE', 'E-TECH']
@@ -52,6 +53,21 @@ BLOCKAGES = [
     'Attente budget', 'Concurrent en place', 'Caractéristique véhicule',
     'Financement', 'Validation hiérarchique', 'Inconnu'
 ]
+
+
+def safe_index(options, value, default=0):
+    try:
+        return options.index(value)
+    except Exception:
+        return default
+
+
+def vehicle_label_parts(row_like):
+    gamme = str((row_like.get('gamme') if hasattr(row_like, 'get') else '') or '').strip()
+    bodywork = str((row_like.get('bodywork') if hasattr(row_like, 'get') else '') or '').strip()
+    energy = str((row_like.get('energy') if hasattr(row_like, 'get') else '') or '').strip()
+    parts = [p for p in [gamme, bodywork, energy] if p]
+    return ' - '.join(parts) if parts else 'Véhicule non renseigné'
 
 
 # ---------- DB helpers ----------
@@ -328,6 +344,7 @@ def get_affairs():
                 df[col] = pd.to_datetime(df[col], errors='coerce').dt.date
         df['days_without_activity'] = (pd.Timestamp.today().normalize() - pd.to_datetime(df['last_activity_on'], errors='coerce')).dt.days
         df['retard_action'] = pd.to_datetime(df['next_action_date'], errors='coerce').dt.date < date.today()
+        df['vehicle_label'] = df.apply(vehicle_label_parts, axis=1)
     return df
 
 
@@ -382,7 +399,7 @@ def upsert_affair(data):
         exists = cur.execute('SELECT 1 FROM affairs WHERE id = ?', (affair_id,)).fetchone()
         payload = (
             affair_id, data.get('client_id'), data.get('priority'), to_date_str(data.get('created_on')),
-            data.get('assigned_to'), data.get('opportunity_type'), data.get('category'), data.get('gamme'),
+            data.get('assigned_to'), data.get('opportunity_type'), None, data.get('gamme'),
             data.get('ptac'), data.get('bodywork'), data.get('energy'), data.get('vn_parc'), duration,
             parse_int(data.get('annual_km')), monthly, total, data.get('status'), to_date_str(data.get('proposal_sent_on')),
             to_date_str(data.get('next_action_date')), data.get('next_action'), data.get('blockage'), data.get('competitor'),
@@ -449,7 +466,7 @@ def get_main_proposal_doc(affair_id):
 def build_relance_email(affair_row, client_row):
     contact_name = client_row.get('contact1_name') or client_row.get('contact2_name') or client_row.get('name')
     firstname = (contact_name.split()[0] if contact_name else '').strip()
-    vehicle_label = affair_row.get('category') or affair_row.get('gamme') or 'le véhicule concerné'
+    vehicle_label = vehicle_label_parts(affair_row)
     subject = f"Relance – Proposition {vehicle_label} – {client_row.get('name')}"
     body = f"""Bonjour {firstname or ''},
 
@@ -603,14 +620,14 @@ def page_dashboard():
         st.subheader('Top opportunités')
         if not affairs.empty:
             top = affairs.sort_values(['priority', 'total_estimated'], ascending=[True, False]).head(5)
-            top_display = top[['client_name', 'category', 'status', 'total_estimated', 'next_action_date']].rename(columns={
-                'client_name': 'Client', 'category': 'Catégorie', 'status': 'Statut', 'total_estimated': 'Montant estimé', 'next_action_date': 'Prochaine action'
+            top_display = top[['client_name', 'vehicle_label', 'status', 'total_estimated', 'next_action_date']].rename(columns={
+                'client_name': 'Client', 'vehicle_label': 'Véhicule', 'status': 'Statut', 'total_estimated': 'Montant estimé', 'next_action_date': 'Prochaine action'
             })
             tab_table, tab_mobile = st.tabs(['Tableau', 'Mobile'])
             with tab_table:
                 st.dataframe(top_display, use_container_width=True, hide_index=True)
             with tab_mobile:
-                render_compact_cards(top_display, [('Catégorie', 'Catégorie'), ('Statut', 'Statut'), ('Montant estimé', 'Montant'), ('Prochaine action', 'Prochaine action')], 'Client')
+                render_compact_cards(top_display, [('Véhicule', 'Véhicule'), ('Statut', 'Statut'), ('Montant estimé', 'Montant'), ('Prochaine action', 'Prochaine action')], 'Client')
     with right:
         st.subheader('Affaires qui dorment')
         if not affairs.empty:
@@ -732,7 +749,8 @@ def page_clients():
         if linked.empty:
             st.info('Aucune affaire liée à ce client.')
         else:
-            st.dataframe(linked[['category', 'status', 'priority', 'monthly_rent', 'next_action_date']], use_container_width=True, hide_index=True)
+            linked_display = linked[['vehicle_label', 'status', 'priority', 'monthly_rent', 'next_action_date']].rename(columns={'vehicle_label':'Véhicule','status':'Statut','priority':'Priorité','monthly_rent':'Loyer mensuel','next_action_date':'Prochaine action'})
+            st.dataframe(linked_display, use_container_width=True, hide_index=True)
 
 
 def page_affairs():
@@ -741,7 +759,7 @@ def page_affairs():
     affairs = get_affairs()
 
     with st.expander('➕ Nouvelle / modifier affaire', expanded=False):
-        name_options = ['Nouvelle affaire'] + ([f"{r['client_name']} — {r['status']} — {r['category']}" for _, r in affairs.iterrows()] if not affairs.empty else [])
+        name_options = ['Nouvelle affaire'] + ([f"{r['client_name']} — {r['status']} — {r['vehicle_label']}" for _, r in affairs.iterrows()] if not affairs.empty else [])
         selected = st.selectbox('Affaire à modifier', name_options)
         current = {}
         if selected != 'Nouvelle affaire' and not affairs.empty:
@@ -750,23 +768,22 @@ def page_affairs():
         with st.form('affair_form'):
             c1, c2, c3 = st.columns(3)
             with c1:
-                client_options = clients['name'].tolist() if not clients.empty else []
+                client_options = clients['name'].tolist() if not clients.empty else ['Aucun client disponible']
                 client_idx = 0
-                if client_options and current.get('client_id') in set(clients['id']):
+                if not clients.empty and current.get('client_id') in set(clients['id']):
                     match_positions = clients.index[clients['id'] == current.get('client_id')].tolist()
                     if match_positions:
-                        client_idx = int(clients.index.get_loc(match_positions[0]))
-                client_name = st.selectbox('Client lié', client_options, index=client_idx if client_options else None)
-                priority = st.selectbox('Priorité', PRIORITIES, index=PRIORITIES.index(current.get('priority')) if current.get('priority') in PRIORITIES else 1)
+                        client_idx = int(match_positions[0])
+                client_name = st.selectbox('Client lié', client_options, index=client_idx, disabled=clients.empty)
+                priority = st.selectbox('Priorité', PRIORITIES, index=safe_index(PRIORITIES, current.get('priority'), 1))
                 created_on = st.date_input('Date de création', value=current.get('created_on') or date.today())
                 assigned_to = st.text_input('Commercial assigné', value=current.get('assigned_to') or 'Louis')
-                opportunity_type = st.selectbox('Type opportunité', TYPE_OPPS, index=TYPE_OPPS.index(current.get('opportunity_type')) if current.get('opportunity_type') in TYPE_OPPS else 0)
+                opportunity_type = st.selectbox('Type opportunité', TYPE_OPPS, index=safe_index(TYPE_OPPS, current.get('opportunity_type'), 0))
             with c2:
-                category = st.selectbox('Catégorie véhicule', CATEGORIES, index=CATEGORIES.index(current.get('category')) if current.get('category') in CATEGORIES else 0)
-                gamme = st.selectbox('Gamme', GAMMES, index=GAMMES.index(current.get('gamme')) if current.get('gamme') in GAMMES else 0)
+                gamme = st.selectbox('Gamme', GAMMES, index=safe_index(GAMMES, current.get('gamme'), 0))
                 ptac = st.text_input('PTAC', value=current.get('ptac') or '')
-                bodywork = st.selectbox('Carrosserie', CARROSSERIES, index=CARROSSERIES.index(current.get('bodywork')) if current.get('bodywork') in CARROSSERIES else 0)
-                energy = st.selectbox('Énergie', ENERGIES, index=ENERGIES.index(current.get('energy')) if current.get('energy') in ENERGIES else 0)
+                bodywork = st.selectbox('Carrosserie', CARROSSERIES, index=safe_index(CARROSSERIES, current.get('bodywork'), 0))
+                energy = st.selectbox('Énergie', ENERGIES, index=safe_index(ENERGIES, current.get('energy'), 0))
             with c3:
                 vn_parc = st.text_input('VN / Parc', value=current.get('vn_parc') or '')
                 duration_months = st.number_input('Durée (mois)', min_value=0, step=1, value=int(current.get('duration_months') or 0))
@@ -790,7 +807,7 @@ def page_affairs():
                 client_id = clients[clients['name'] == client_name].iloc[0]['id'] if not clients.empty else None
                 upsert_affair({
                     'id': current.get('id'), 'client_id': client_id, 'priority': priority, 'created_on': created_on,
-                    'assigned_to': assigned_to, 'opportunity_type': opportunity_type, 'category': category,
+                    'assigned_to': assigned_to, 'opportunity_type': opportunity_type,
                     'gamme': gamme, 'ptac': ptac, 'bodywork': bodywork, 'energy': energy, 'vn_parc': vn_parc,
                     'duration_months': duration_months, 'annual_km': annual_km, 'monthly_rent': monthly_rent,
                     'status': status, 'proposal_sent_on': proposal_sent_on, 'next_action_date': next_action_date,
@@ -802,15 +819,13 @@ def page_affairs():
                 st.rerun()
 
     st.subheader('Filtres')
-    f1, f2, f3, f4 = st.columns(4)
+    f1, f2, f3 = st.columns(3)
     with f1:
         status_filter = st.multiselect('Statut', STATUSES)
     with f2:
         prio_filter = st.multiselect('Priorité', PRIORITIES)
     with f3:
         type_filter = st.multiselect('Type', TYPE_OPPS)
-    with f4:
-        category_filter = st.multiselect('Catégorie', CATEGORIES)
 
     filtered = affairs.copy()
     if not filtered.empty:
@@ -820,24 +835,22 @@ def page_affairs():
             filtered = filtered[filtered['priority'].isin(prio_filter)]
         if type_filter:
             filtered = filtered[filtered['opportunity_type'].isin(type_filter)]
-        if category_filter:
-            filtered = filtered[filtered['category'].isin(category_filter)]
 
-    filtered_display = filtered[['client_name', 'priority', 'opportunity_type', 'category', 'status', 'monthly_rent', 'next_action_date', 'competitor', 'blockage']].rename(columns={
-        'client_name':'Client','priority':'Priorité','opportunity_type':'Type opportunité','category':'Catégorie','status':'Statut','monthly_rent':'Loyer mensuel','next_action_date':'Prochaine action','competitor':'Concurrent','blockage':'Blocage'
+    filtered_display = filtered[['client_name', 'priority', 'opportunity_type', 'vehicle_label', 'status', 'monthly_rent', 'next_action_date', 'competitor', 'blockage']].rename(columns={
+        'client_name':'Client','priority':'Priorité','opportunity_type':'Type opportunité','vehicle_label':'Véhicule','status':'Statut','monthly_rent':'Loyer mensuel','next_action_date':'Prochaine action','competitor':'Concurrent','blockage':'Blocage'
     })
     tab_table, tab_mobile = st.tabs(['Tableau', 'Mobile'])
     with tab_table:
         st.dataframe(filtered_display, use_container_width=True, hide_index=True)
     with tab_mobile:
-        render_compact_cards(filtered_display, [('Priorité','Priorité'),('Type opportunité','Type'),('Catégorie','Catégorie'),('Statut','Statut'),('Loyer mensuel','Loyer'),('Prochaine action','Prochaine action'),('Concurrent','Concurrent'),('Blocage','Blocage')], 'Client')
+        render_compact_cards(filtered_display, [('Priorité','Priorité'),('Type opportunité','Type'),('Véhicule','Véhicule'),('Statut','Statut'),('Loyer mensuel','Loyer'),('Prochaine action','Prochaine action'),('Concurrent','Concurrent'),('Blocage','Blocage')], 'Client')
 
     st.subheader('Fiche affaire')
     if affairs.empty:
         st.info('Aucune affaire à afficher.')
         return
 
-    select_map = {f"{r['client_name']} — {r['status']} — {r['category']}": r['id'] for _, r in affairs.iterrows()}
+    select_map = {f"{r['client_name']} — {r['status']} — {r['vehicle_label']}": r['id'] for _, r in affairs.iterrows()}
     selected_label = st.selectbox('Ouvrir une affaire', list(select_map.keys()))
     affair = load_row_as_dict(affairs, select_map[selected_label])
     client = load_row_as_dict(clients, affair['client_id'])
@@ -918,12 +931,12 @@ def page_today():
     with tab_mobile:
         render_compact_cards(today_display, [('Statut','Statut'),('Action','Action'),('Date','Date'),('Priorité','Priorité')], 'Client')
     st.subheader('AO à échéance proche')
-    ao_display = ao_df[['client_name', 'category', 'ao_deadline', 'status']].rename(columns={'client_name':'Client','category':'Catégorie','ao_deadline':'Échéance AO','status':'Statut'})
+    ao_display = ao_df[['client_name', 'vehicle_label', 'ao_deadline', 'status']].rename(columns={'client_name':'Client','vehicle_label':'Véhicule','ao_deadline':'Échéance AO','status':'Statut'})
     tab_table2, tab_mobile2 = st.tabs(['Tableau', 'Mobile'])
     with tab_table2:
         st.dataframe(ao_display, use_container_width=True, hide_index=True)
     with tab_mobile2:
-        render_compact_cards(ao_display, [('Catégorie','Catégorie'),('Échéance AO','Échéance'),('Statut','Statut')], 'Client')
+        render_compact_cards(ao_display, [('Véhicule','Véhicule'),('Échéance AO','Échéance'),('Statut','Statut')], 'Client')
     st.subheader('Affaires chaudes inactives')
     hot_display = hot_df[['client_name', 'status', 'days_without_activity', 'monthly_rent']].rename(columns={'client_name':'Client','status':'Statut','days_without_activity':'Jours sans activité','monthly_rent':'Loyer mensuel'})
     tab_table3, tab_mobile3 = st.tabs(['Tableau', 'Mobile'])
@@ -951,9 +964,9 @@ def page_stats():
     c4.metric('Taux de transformation', f'{rate}%')
     st.metric('CA moyen par affaire', f"{avg_ticket:,.0f} €".replace(',', ' '))
 
-    st.subheader('Répartition par catégorie')
-    by_cat = affairs.groupby('category', dropna=False).agg(nombre=('id', 'count'), montant_total=('total_estimated', 'sum')).reset_index()
-    by_cat = by_cat.rename(columns={'category': 'Catégorie', 'montant_total': 'Montant total'})
+    st.subheader('Répartition par véhicule')
+    by_cat = affairs.groupby('vehicle_label', dropna=False).agg(nombre=('id', 'count'), montant_total=('total_estimated', 'sum')).reset_index()
+    by_cat = by_cat.rename(columns={'vehicle_label': 'Véhicule', 'montant_total': 'Montant total'})
     st.dataframe(by_cat, use_container_width=True, hide_index=True)
     st.subheader('Concurrence')
     by_comp = affairs.fillna({'competitor': 'Non renseigné'}).groupby('competitor').agg(nombre=('id', 'count')).reset_index().sort_values('nombre', ascending=False)
@@ -974,8 +987,8 @@ def page_quick_add():
         with st.form('quick_affair'):
             c1, c2 = st.columns(2)
             with c1:
-                client_name = st.selectbox('Client', clients['name'].tolist() if not clients.empty else [])
-                category = st.selectbox('Catégorie', CATEGORIES)
+                client_name = st.selectbox('Client', clients['name'].tolist() if not clients.empty else ['Aucun client disponible'], disabled=clients.empty)
+                gamme = st.selectbox('Gamme', GAMMES)
                 status = st.selectbox('Statut', STATUSES, index=2)
             with c2:
                 monthly_rent = st.number_input('Loyer €', min_value=0.0, step=10.0)
@@ -989,7 +1002,7 @@ def page_quick_add():
                     client_id = clients[clients['name'] == client_name].iloc[0]['id']
                     upsert_affair({
                         'client_id': client_id, 'priority': '⚠️ À suivre', 'created_on': date.today(), 'assigned_to': 'Louis',
-                        'opportunity_type': 'Prospect', 'category': category, 'status': status, 'monthly_rent': monthly_rent,
+                        'opportunity_type': 'Prospect', 'gamme': gamme, 'status': status, 'monthly_rent': monthly_rent,
                         'next_action': next_action, 'next_action_date': next_action_date, 'last_activity_on': date.today(),
                     })
                     st.success('Affaire créée.')
