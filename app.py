@@ -761,6 +761,12 @@ def page_affaires():
                     </div>
                     """, unsafe_allow_html=True)
 
+                    col_close, col_close_spacer = st.columns([1, 5])
+                    with col_close:
+                        if st.button("❌ Fermer la fiche", key=f"{section_key}_close_{affaire_id}", use_container_width=True):
+                            st.session_state[selected_key] = None
+                            st.rerun()
+
                     if editable:
                         with st.form(f"form_{section_key}_{affaire_id}"):
                             data = affaire_form(clients_df, current, key_prefix=f"{section_key}_form_{affaire_id}")
