@@ -35,7 +35,6 @@ STATUSES = [
 
 PRIORITIES = ['🔥 Chaud', '⚠️ À suivre', '🧊 Froid']
 TYPE_OPPS = ['Prospect', 'Client existant', 'Renouvellement', 'AO / SAD']
-CATEGORIES = ['VHL', 'VUL', '3.5T', '5.2T', '10T', '16T', 'Frigo']
 GAMMES = ['GL', 'VU', 'REM']
 CARROSSERIES = ['FRIGO', 'HYDRAU', 'SEC', 'TRR', 'AUTRE']
 ENERGIES = ['B7', 'B100', 'B100 FLEXIBLE', 'E-TECH']
