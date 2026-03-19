@@ -36,6 +36,9 @@ STATUSES = [
 PRIORITIES = ['🔥 Chaud', '⚠️ À suivre', '🧊 Froid']
 TYPE_OPPS = ['Prospect', 'Client existant', 'Renouvellement', 'AO / SAD']
 CATEGORIES = ['VHL', 'VUL', '3.5T', '5.2T', '10T', '16T', 'Frigo']
+GAMMES = ['GL', 'VU', 'REM']
+CARROSSERIES = ['FRIGO', 'HYDRAU', 'SEC', 'TRR', 'AUTRE']
+ENERGIES = ['B7', 'B100', 'B100 FLEXIBLE', 'E-TECH']
 CLIENT_TYPES = ['Prospect', 'Client', 'Ancien client', 'Grand compte', 'AO / public']
 CLIENT_STATUS = ['Actif', 'À relancer', 'En sommeil']
 POTENTIALS = ['Faible', 'Moyen', 'Fort']
@@ -748,17 +751,23 @@ def page_affairs():
         with st.form('affair_form'):
             c1, c2, c3 = st.columns(3)
             with c1:
-                client_name = st.selectbox('Client lié', clients['name'].tolist() if not clients.empty else [], index=(clients[clients['id'] == current.get('client_id')].index[0] if current.get('client_id') in set(clients['id']) else 0) if not clients.empty else None)
+                client_options = clients['name'].tolist() if not clients.empty else []
+                client_idx = 0
+                if client_options and current.get('client_id') in set(clients['id']):
+                    match_positions = clients.index[clients['id'] == current.get('client_id')].tolist()
+                    if match_positions:
+                        client_idx = int(clients.index.get_loc(match_positions[0]))
+                client_name = st.selectbox('Client lié', client_options, index=client_idx if client_options else None)
                 priority = st.selectbox('Priorité', PRIORITIES, index=PRIORITIES.index(current.get('priority')) if current.get('priority') in PRIORITIES else 1)
                 created_on = st.date_input('Date de création', value=current.get('created_on') or date.today())
                 assigned_to = st.text_input('Commercial assigné', value=current.get('assigned_to') or 'Louis')
                 opportunity_type = st.selectbox('Type opportunité', TYPE_OPPS, index=TYPE_OPPS.index(current.get('opportunity_type')) if current.get('opportunity_type') in TYPE_OPPS else 0)
             with c2:
                 category = st.selectbox('Catégorie véhicule', CATEGORIES, index=CATEGORIES.index(current.get('category')) if current.get('category') in CATEGORIES else 0)
-                gamme = st.text_input('Gamme', value=current.get('gamme') or '')
+                gamme = st.selectbox('Gamme', GAMMES, index=GAMMES.index(current.get('gamme')) if current.get('gamme') in GAMMES else 0)
                 ptac = st.text_input('PTAC', value=current.get('ptac') or '')
-                bodywork = st.text_input('Carrosserie', value=current.get('bodywork') or '')
-                energy = st.text_input('Énergie', value=current.get('energy') or '')
+                bodywork = st.selectbox('Carrosserie', CARROSSERIES, index=CARROSSERIES.index(current.get('bodywork')) if current.get('bodywork') in CARROSSERIES else 0)
+                energy = st.selectbox('Énergie', ENERGIES, index=ENERGIES.index(current.get('energy')) if current.get('energy') in ENERGIES else 0)
             with c3:
                 vn_parc = st.text_input('VN / Parc', value=current.get('vn_parc') or '')
                 duration_months = st.number_input('Durée (mois)', min_value=0, step=1, value=int(current.get('duration_months') or 0))
