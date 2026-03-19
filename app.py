@@ -640,7 +640,8 @@ def page_affaires():
 
     with onglet_creation:
         affaires_df = fetch_affaires()
-        options = ["Nouvelle affaire"] + [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_df.iterrows()]
+        affaires_actives_df = affaires_df[affaires_df["statut"] != "Perdu"].copy()
+        options = ["Nouvelle affaire"] + [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_actives_df.iterrows()]
         selected = st.selectbox("Choisir un dossier affaire", options, key="affaire_edit_select")
         if st.session_state.get("affaire_edit_selected") != selected:
             st.session_state["affaire_edit_selected"] = selected
@@ -649,7 +650,7 @@ def page_affaires():
         current_id = None
         if selected != "Nouvelle affaire":
             current_id = int(selected.split(" - ")[0].replace("#", ""))
-            current = affaires_df[affaires_df["id"] == current_id].iloc[0].to_dict()
+            current = affaires_actives_df[affaires_actives_df["id"] == current_id].iloc[0].to_dict()
 
         with st.form(f"form_affaire_create_edit_{current_id or 'new'}"):
             data = affaire_form(clients_df, current, key_prefix=f"affaire_form_{current_id or 'new'}")
@@ -677,11 +678,14 @@ def page_affaires():
             st.info("Aucune affaire pour le moment.")
             return
 
-        label_list = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_df.iterrows()]
+        affaires_actives_df = affaires_df[affaires_df["statut"] != "Perdu"].copy()
+        affaires_perdues_df = affaires_df[affaires_df["statut"] == "Perdu"].copy()
+
+        label_list = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_actives_df.iterrows()]
         default_index = 0
         if "last_affaire_id" in st.session_state:
             last_id = st.session_state["last_affaire_id"]
-            for i, (_, row) in enumerate(affaires_df.iterrows()):
+            for i, (_, row) in enumerate(affaires_actives_df.iterrows()):
                 if int(row["id"]) == int(last_id):
                     default_index = i
                     break
@@ -691,7 +695,7 @@ def page_affaires():
             st.session_state["follow_affaire_selected"] = selected
 
         affaire_id = int(selected.split(" - ")[0].replace("#", ""))
-        current = affaires_df[affaires_df["id"] == affaire_id].iloc[0].to_dict()
+        current = affaires_actives_df[affaires_actives_df["id"] == affaire_id].iloc[0].to_dict()
 
         st.markdown(f"""
         <div class="card">
@@ -721,7 +725,7 @@ def page_affaires():
 
         st.markdown("### Liste rapide")
         filtre = st.text_input("Filtrer les affaires (client / statut)", key="affaire_filter")
-        temp = affaires_df.copy()
+        temp = affaires_actives_df.copy()
         if filtre.strip():
             mask = temp["client_nom"].fillna("").str.contains(filtre, case=False) | temp["statut"].fillna("").str.contains(filtre, case=False)
             temp = temp[mask]
@@ -735,6 +739,21 @@ def page_affaires():
                 Total estimé : {total_est:,.0f} € | Action : {row.get('action_suivante','')} | Prochaine action : {display_date(row.get('date_prochaine_action'))}
             </div>
             """.replace(",", " "), unsafe_allow_html=True)
+
+        with st.expander(f"Affaires perdues archivées ({len(affaires_perdues_df)})"):
+            if affaires_perdues_df.empty:
+                st.info("Aucune affaire perdue.")
+            else:
+                for _, row in affaires_perdues_df.iterrows():
+                    total_est = safe_int(row.get("duree_mois"), 0) * safe_float(row.get("loyer_mensuel"), 0.0)
+                    st.markdown(f"""
+                    <div class="card">
+                        <b>#{row['id']} - {row.get('client_nom') or 'Sans client'}</b><br>
+                        {row.get('gamme','')} - {row.get('carrosserie','')} - {row.get('energie','')}<br>
+                        Statut : {row.get('statut','')} | Priorité : {row.get('priorite','')}<br>
+                        Total estimé : {total_est:,.0f} € | Action : {row.get('action_suivante','')} | Prochaine action : {display_date(row.get('date_prochaine_action'))}
+                    </div>
+                    """.replace(",", " "), unsafe_allow_html=True)
 
 
 def page_stats():
