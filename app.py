@@ -345,6 +345,26 @@ def has_real_date(v):
         return str(v).strip() not in ('', 'None', 'NaT', 'nat')
 
 
+def format_optional_date(v):
+    d = coerce_date(v, default=None)
+    return d.strftime('%Y-%m-%d') if d else ''
+
+
+def parse_optional_date_input(value):
+    value = str(value or '').strip()
+    if not value:
+        return None
+    for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y'):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except Exception:
+            pass
+    dt = pd.to_datetime(value, errors='coerce', dayfirst=True)
+    if pd.isna(dt):
+        return '__INVALID__'
+    return dt.date()
+
+
 def normalize_status(status):
     mapping = {
         'Faire Proposition': 'Faire proposition',
@@ -762,12 +782,17 @@ def page_clients():
     st.title('Clients')
     clients = get_clients()
     affairs = get_affairs()
+    if not clients.empty:
+        clients = clients.sort_values('name', key=lambda s: s.str.lower())
 
-    with st.expander('➕ Nouveau / modifier client', expanded=False):
-        selected_id = st.selectbox('Client à modifier', ['Nouveau client'] + clients['name'].tolist() if not clients.empty else ['Nouveau client'])
+    tab_create, tab_follow = st.tabs(['➕ Créer / modifier', '📂 Suivi des clients'])
+
+    with tab_create:
+        options = ['Nouveau client'] + clients['name'].tolist() if not clients.empty else ['Nouveau client']
+        selected_name = st.selectbox('Client à modifier', options)
         current = {}
-        if selected_id != 'Nouveau client':
-            current = load_row_as_dict(clients, clients[clients['name'] == selected_id].iloc[0]['id'])
+        if selected_name != 'Nouveau client' and not clients.empty:
+            current = load_row_as_dict(clients, clients[clients['name'] == selected_name].iloc[0]['id'])
         with st.form('client_form'):
             c1, c2 = st.columns(2)
             with c1:
@@ -813,7 +838,7 @@ def page_clients():
                 if not name.strip():
                     st.error('Le nom du client est obligatoire.')
                 else:
-                    cid = upsert_client({
+                    upsert_client({
                         'id': current.get('id'), 'name': name.strip(), 'sector': sector, 'account_type': account_type,
                         'address': address, 'city': city, 'postal_code': postal_code, 'siret': siret, 'naf': naf, 'phone': phone, 'email': email,
                         'client_status': client_status, 'potential': potential, 'competitor': competitor, 'notes': notes,
@@ -824,15 +849,13 @@ def page_clients():
                     })
                     st.success(f'Client enregistré : {name}')
                     st.rerun()
-
         if current.get('id'):
             st.markdown('---')
-            st.markdown('**Suppression du client**')
             linked_count = 0
             if not affairs.empty:
                 linked_count = int((affairs['client_id'] == current.get('id')).sum())
             if linked_count > 0:
-                st.warning(f"Ce client a {linked_count} affaire(s) liée(s). Tu peux soit supprimer uniquement le client, soit supprimer aussi ses affaires et documents.")
+                st.warning(f"Ce client a {linked_count} affaire(s) liée(s).")
             confirm_delete_client = st.checkbox("Je confirme la suppression de ce client", key=f"confirm_delete_client_{current.get('id')}")
             delete_linked_affairs = st.checkbox("Supprimer aussi les affaires et documents liés", key=f"delete_linked_affairs_{current.get('id')}") if linked_count > 0 else False
             if st.button('🗑️ Supprimer ce client', type='secondary', key=f"delete_client_btn_{current.get('id')}"):
@@ -843,46 +866,58 @@ def page_clients():
                     st.success('Client supprimé.')
                     st.rerun()
 
-    st.subheader('Base clients')
-    if clients.empty:
-        st.info('Aucun client pour le moment.')
-    else:
-        display = clients[['name', 'sector', 'account_type', 'client_status', 'potential', 'contact1_name', 'contact2_name']].copy()
-        display = display.rename(columns={'name':'Client','sector':'Secteur','account_type':'Type de compte','client_status':'Statut client','potential':'Potentiel','contact1_name':'Contact 1','contact2_name':'Contact 2'})
-        tab_table, tab_mobile = st.tabs(['Tableau', 'Mobile'])
-        with tab_table:
-            st.dataframe(display, use_container_width=True, hide_index=True)
-        with tab_mobile:
-            render_compact_cards(display, [('Secteur','Secteur'),('Type de compte','Type de compte'),('Statut client','Statut'),('Potentiel','Potentiel'),('Contact 1','Contact 1'),('Contact 2','Contact 2')], 'Client')
-
-        client_name = st.selectbox('Ouvrir une fiche client', clients['name'].tolist())
-        client = clients[clients['name'] == client_name].iloc[0].to_dict()
-        linked = affairs[affairs['client_id'] == client['id']] if not affairs.empty else pd.DataFrame()
-        st.markdown(f"### {client['name']}")
-        a, b, c = st.columns(3)
-        a.write(f"**Statut** : {client.get('client_status') or '-'}")
-        b.write(f"**Potentiel** : {client.get('potential') or '-'}")
-        c.write(f"**Concurrent** : {client.get('competitor') or '-'}")
-        d, e = st.columns(2)
-        d.write(f"**SIRET** : {client.get('siret') or '-'}")
-        e.write(f"**Code NAF** : {client.get('naf') or '-'}")
-        st.write(f"**Contact 1** : {client.get('contact1_name') or '-'} — {client.get('contact1_title') or '-'} — {client.get('contact1_email') or '-'}")
-        st.write(f"**Contact 2** : {client.get('contact2_name') or '-'} — {client.get('contact2_title') or '-'} — {client.get('contact2_email') or '-'}")
-        st.write(f"**Notes** : {client.get('notes') or '-'}")
-        st.markdown('**Affaires liées**')
-        if linked.empty:
-            st.info('Aucune affaire liée à ce client.')
+    with tab_follow:
+        st.subheader('Base clients')
+        if clients.empty:
+            st.info('Aucun client pour le moment.')
         else:
-            linked_display = linked[['vehicle_label', 'status', 'priority', 'monthly_rent', 'next_action_date']].rename(columns={'vehicle_label':'Véhicule','status':'Statut','priority':'Priorité','monthly_rent':'Loyer mensuel','next_action_date':'Prochaine action'})
-            st.dataframe(linked_display, use_container_width=True, hide_index=True)
-
+            display = clients[['name', 'sector', 'account_type', 'client_status', 'potential', 'contact1_name', 'contact2_name']].copy()
+            display = display.rename(columns={'name':'Client','sector':'Secteur','account_type':'Type de compte','client_status':'Statut client','potential':'Potentiel','contact1_name':'Contact 1','contact2_name':'Contact 2'})
+            tab_table, tab_mobile = st.tabs(['Tableau', 'Mobile'])
+            with tab_table:
+                st.dataframe(display, use_container_width=True, hide_index=True)
+            with tab_mobile:
+                for _, row in clients.iterrows():
+                    st.markdown(f"**{row['name']}** — {row.get('client_status') or '-'} — {row.get('potential') or '-'}")
+                    if st.button('Ouvrir la fiche', key=f"open_client_{row['id']}"):
+                        st.session_state['open_client_id'] = row['id']
+            default_client_id = st.session_state.get('open_client_id')
+            client_options = clients['name'].tolist()
+            idx = 0
+            if default_client_id and default_client_id in set(clients['id']):
+                idx = int(clients.index[clients['id'] == default_client_id][0])
+            client_name = st.selectbox('Ouvrir une fiche client', client_options, index=idx)
+            client = clients[clients['name'] == client_name].iloc[0].to_dict()
+            st.session_state['open_client_id'] = client['id']
+            linked = affairs[affairs['client_id'] == client['id']] if not affairs.empty else pd.DataFrame()
+            st.markdown(f"### {client['name']}")
+            a, b, c = st.columns(3)
+            a.write(f"**Statut** : {client.get('client_status') or '-'}")
+            b.write(f"**Potentiel** : {client.get('potential') or '-'}")
+            c.write(f"**Concurrent** : {client.get('competitor') or '-'}")
+            d, e = st.columns(2)
+            d.write(f"**SIRET** : {client.get('siret') or '-'}")
+            e.write(f"**Code NAF** : {client.get('naf') or '-'}")
+            st.write(f"**Contact 1** : {client.get('contact1_name') or '-'} — {client.get('contact1_title') or '-'} — {client.get('contact1_email') or '-'}")
+            st.write(f"**Contact 2** : {client.get('contact2_name') or '-'} — {client.get('contact2_title') or '-'} — {client.get('contact2_email') or '-'}")
+            st.write(f"**Notes** : {client.get('notes') or '-'}")
+            st.markdown('**Affaires liées**')
+            if linked.empty:
+                st.info('Aucune affaire liée à ce client.')
+            else:
+                linked_display = linked[['vehicle_label', 'status', 'priority', 'monthly_rent', 'next_action_date']].rename(columns={'vehicle_label':'Véhicule','status':'Statut','priority':'Priorité','monthly_rent':'Loyer mensuel','next_action_date':'Prochaine action'})
+                st.dataframe(linked_display, use_container_width=True, hide_index=True)
 
 def page_affairs():
     st.title('Affaires')
     clients = get_clients()
     affairs = get_affairs()
+    if not clients.empty:
+        clients = clients.sort_values('name', key=lambda s: s.str.lower())
 
-    with st.expander('➕ Nouvelle / modifier affaire', expanded=False):
+    tab_create, tab_follow = st.tabs(['➕ Créer / modifier', '📂 Suivi des affaires'])
+
+    with tab_create:
         name_options = ['Nouvelle affaire'] + ([f"{r['client_name']} — {r['status']} — {r['vehicle_label']}" for _, r in affairs.iterrows()] if not affairs.empty else [])
         selected = st.selectbox('Affaire à modifier', name_options)
         current = {}
@@ -918,47 +953,48 @@ def page_affairs():
                 s1, s2, s3 = st.columns(3)
                 with s1:
                     status = st.selectbox('Statut', STATUSES, index=STATUSES.index(current.get('status')) if current.get('status') in STATUSES else 0)
-
-                    has_proposal_sent_on = st.checkbox('Renseigner la date d’envoi proposition', value=has_real_date(current.get('proposal_sent_on')))
-                    proposal_sent_on = st.date_input('Date envoi proposition', value=coerce_date(current.get('proposal_sent_on')), disabled=not has_proposal_sent_on)
-                    if not has_proposal_sent_on:
-                        proposal_sent_on = None
-
-                    has_next_action_date = st.checkbox('Renseigner la prochaine action', value=has_real_date(current.get('next_action_date')))
-                    next_action_date = st.date_input('Date prochaine action', value=coerce_date(current.get('next_action_date')), disabled=not has_next_action_date)
-                    if not has_next_action_date:
-                        next_action_date = None
+                    proposal_sent_on_txt = st.text_input('Date envoi proposition (laisser vide si aucune)', value=format_optional_date(current.get('proposal_sent_on')))
+                    next_action_date_txt = st.text_input('Date prochaine action (laisser vide si aucune)', value=format_optional_date(current.get('next_action_date')))
                 with s2:
                     next_action = st.selectbox('Action suivante', ACTIONS, index=ACTIONS.index(current.get('next_action')) if current.get('next_action') in ACTIONS else 0)
                     blockage = st.selectbox('Blocage principal', BLOCKAGES, index=BLOCKAGES.index(current.get('blockage')) if current.get('blockage') in BLOCKAGES else 0)
                     competitor = st.text_input('Concurrent', value=current.get('competitor') or '')
                 with s3:
                     contract_ref = st.text_input('Contrat / BDC', value=current.get('contract_ref') or '')
-                    has_ao_deadline = st.checkbox('Renseigner la deadline AO', value=has_real_date(current.get('ao_deadline')))
-                    ao_deadline = st.date_input('Deadline AO', value=coerce_date(current.get('ao_deadline')), disabled=not has_ao_deadline)
-                    if not has_ao_deadline:
-                        ao_deadline = None
+                    ao_deadline_txt = st.text_input('Deadline AO (laisser vide si aucune)', value=format_optional_date(current.get('ao_deadline')))
             with tab_notes:
                 comments = st.text_area('Notes sur l’affaire', value=current.get('comments') or '', height=220, placeholder='Compte-rendu, relances, contexte, infos terrain...')
             submitted = st.form_submit_button('Enregistrer l’affaire')
             if submitted:
-                client_id = clients[clients['name'] == client_name].iloc[0]['id'] if not clients.empty else None
-                upsert_affair({
-                    'id': current.get('id'), 'client_id': client_id, 'priority': priority, 'created_on': created_on,
-                    'assigned_to': assigned_to, 'opportunity_type': opportunity_type,
-                    'gamme': gamme, 'ptac': ptac, 'bodywork': bodywork, 'energy': energy, 'vn_parc': vn_parc,
-                    'duration_months': duration_months, 'annual_km': annual_km, 'monthly_rent': monthly_rent,
-                    'status': status, 'proposal_sent_on': proposal_sent_on, 'next_action_date': next_action_date,
-                    'next_action': next_action, 'blockage': blockage, 'competitor': competitor,
-                    'contract_ref': contract_ref, 'ao_deadline': ao_deadline, 'comments': comments,
-                    'last_activity_on': date.today(),
-                })
-                st.success('Affaire enregistrée.')
-                st.rerun()
+                proposal_sent_on = parse_optional_date_input(proposal_sent_on_txt)
+                next_action_date = parse_optional_date_input(next_action_date_txt)
+                ao_deadline = parse_optional_date_input(ao_deadline_txt)
+                invalid_fields = []
+                if proposal_sent_on == '__INVALID__':
+                    invalid_fields.append('Date envoi proposition')
+                if next_action_date == '__INVALID__':
+                    invalid_fields.append('Date prochaine action')
+                if ao_deadline == '__INVALID__':
+                    invalid_fields.append('Deadline AO')
+                if invalid_fields:
+                    st.error('Format de date invalide : ' + ', '.join(invalid_fields) + '. Utilise AAAA-MM-JJ ou JJ/MM/AAAA.')
+                else:
+                    client_id = clients[clients['name'] == client_name].iloc[0]['id'] if not clients.empty else None
+                    upsert_affair({
+                        'id': current.get('id'), 'client_id': client_id, 'priority': priority, 'created_on': created_on,
+                        'assigned_to': assigned_to, 'opportunity_type': opportunity_type,
+                        'gamme': gamme, 'ptac': ptac, 'bodywork': bodywork, 'energy': energy, 'vn_parc': vn_parc,
+                        'duration_months': duration_months, 'annual_km': annual_km, 'monthly_rent': monthly_rent,
+                        'status': status, 'proposal_sent_on': proposal_sent_on, 'next_action_date': next_action_date,
+                        'next_action': next_action, 'blockage': blockage, 'competitor': competitor,
+                        'contract_ref': contract_ref, 'ao_deadline': ao_deadline, 'comments': comments,
+                        'last_activity_on': date.today(),
+                    })
+                    st.success('Affaire enregistrée.')
+                    st.rerun()
 
         if current.get('id'):
             st.markdown('---')
-            st.markdown('**Suppression de l’affaire**')
             confirm_delete_affair = st.checkbox("Je confirme la suppression de cette affaire", key=f"confirm_delete_affair_{current.get('id')}")
             if st.button('🗑️ Supprimer cette affaire', type='secondary', key=f"delete_affair_btn_{current.get('id')}"):
                 if not confirm_delete_affair:
@@ -968,100 +1004,114 @@ def page_affairs():
                     st.success('Affaire supprimée.')
                     st.rerun()
 
-    st.subheader('Filtres')
-    f1, f2, f3 = st.columns(3)
-    with f1:
-        status_filter = st.multiselect('Statut', STATUSES)
-    with f2:
-        prio_filter = st.multiselect('Priorité', PRIORITIES)
-    with f3:
-        type_filter = st.multiselect('Type', TYPE_OPPS)
+    with tab_follow:
+        st.subheader('Filtres')
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            status_filter = st.multiselect('Statut', STATUSES)
+        with f2:
+            prio_filter = st.multiselect('Priorité', PRIORITIES)
+        with f3:
+            type_filter = st.multiselect('Type', TYPE_OPPS)
 
-    filtered = affairs.copy()
-    if not filtered.empty:
-        if status_filter:
-            filtered = filtered[filtered['status'].isin(status_filter)]
-        if prio_filter:
-            filtered = filtered[filtered['priority'].isin(prio_filter)]
-        if type_filter:
-            filtered = filtered[filtered['opportunity_type'].isin(type_filter)]
+        filtered = affairs.copy()
+        if not filtered.empty:
+            if status_filter:
+                filtered = filtered[filtered['status'].isin(status_filter)]
+            if prio_filter:
+                filtered = filtered[filtered['priority'].isin(prio_filter)]
+            if type_filter:
+                filtered = filtered[filtered['opportunity_type'].isin(type_filter)]
 
-    filtered_display = filtered[['client_name', 'priority', 'opportunity_type', 'vehicle_label', 'status', 'monthly_rent', 'next_action_date', 'competitor', 'blockage']].rename(columns={
-        'client_name':'Client','priority':'Priorité','opportunity_type':'Type opportunité','vehicle_label':'Véhicule','status':'Statut','monthly_rent':'Loyer mensuel','next_action_date':'Prochaine action','competitor':'Concurrent','blockage':'Blocage'
-    })
-    tab_table, tab_mobile = st.tabs(['Tableau', 'Mobile'])
-    with tab_table:
-        st.dataframe(filtered_display, use_container_width=True, hide_index=True)
-    with tab_mobile:
-        render_compact_cards(filtered_display, [('Priorité','Priorité'),('Type opportunité','Type'),('Véhicule','Véhicule'),('Statut','Statut'),('Loyer mensuel','Loyer'),('Prochaine action','Prochaine action'),('Concurrent','Concurrent'),('Blocage','Blocage')], 'Client')
+        filtered_display = filtered[['client_name', 'priority', 'opportunity_type', 'vehicle_label', 'status', 'monthly_rent', 'next_action_date', 'competitor', 'blockage']].rename(columns={
+            'client_name':'Client','priority':'Priorité','opportunity_type':'Type opportunité','vehicle_label':'Véhicule','status':'Statut','monthly_rent':'Loyer mensuel','next_action_date':'Prochaine action','competitor':'Concurrent','blockage':'Blocage'
+        })
+        tab_table, tab_mobile = st.tabs(['Tableau', 'Mobile'])
+        with tab_table:
+            st.dataframe(filtered_display, use_container_width=True, hide_index=True)
+        with tab_mobile:
+            for _, row in filtered.iterrows():
+                st.markdown(f"**{row.get('client_name') or 'Client non lié'}** — {row.get('vehicle_label') or '-'} — {row.get('status') or '-'}")
+                if st.button('Ouvrir le dossier', key=f"open_affair_{row['id']}"):
+                    st.session_state['open_affair_id'] = row['id']
 
-    st.subheader('Fiche affaire')
-    if affairs.empty:
-        st.info('Aucune affaire à afficher.')
-        return
+        st.subheader('Fiche affaire')
+        if affairs.empty:
+            st.info('Aucune affaire à afficher.')
+            return
 
-    select_map = {f"{r['client_name']} — {r['status']} — {r['vehicle_label']}": r['id'] for _, r in affairs.iterrows()}
-    selected_label = st.selectbox('Ouvrir une affaire', list(select_map.keys()))
-    affair = load_row_as_dict(affairs, select_map[selected_label])
-    client = load_row_as_dict(clients, affair['client_id'])
+        default_affair_id = st.session_state.get('open_affair_id')
+        select_map = {f"{r['client_name']} — {r['status']} — {r['vehicle_label']}": r['id'] for _, r in affairs.iterrows()}
+        labels = list(select_map.keys())
+        idx = 0
+        if default_affair_id and default_affair_id in set(affairs['id']):
+            matched = affairs.index[affairs['id'] == default_affair_id].tolist()
+            if matched:
+                affair_row = affairs.iloc[matched[0]]
+                target_label = f"{affair_row['client_name']} — {affair_row['status']} — {affair_row['vehicle_label']}"
+                if target_label in labels:
+                    idx = labels.index(target_label)
+        selected_label = st.selectbox('Ouvrir une affaire', labels, index=idx)
+        affair = load_row_as_dict(affairs, select_map[selected_label])
+        st.session_state['open_affair_id'] = affair['id']
+        client = load_row_as_dict(clients, affair['client_id'])
 
-    a1, a2, a3, a4 = st.columns(4)
-    a1.metric('Client', affair.get('client_name') or '-')
-    a2.metric('Statut', affair.get('status') or '-')
-    a3.metric('Priorité', affair.get('priority') or '-')
-    a4.metric('Montant', f"{(affair.get('total_estimated') or 0):,.0f} €".replace(',', ' '))
+        a1, a2, a3, a4 = st.columns(4)
+        a1.metric('Client', affair.get('client_name') or '-')
+        a2.metric('Statut', affair.get('status') or '-')
+        a3.metric('Priorité', affair.get('priority') or '-')
+        a4.metric('Montant', f"{(affair.get('total_estimated') or 0):,.0f} €".replace(',', ' '))
 
-    st.write(f"**Action suivante** : {affair.get('next_action') or '-'}")
-    st.write(f"**Date prochaine action** : {affair.get('next_action_date') or '-'}")
-    st.write(f"**Blocage** : {affair.get('blockage') or '-'}")
-    st.write(f"**Commentaires** : {affair.get('comments') or '-'}")
+        st.write(f"**Action suivante** : {affair.get('next_action') or '-'}")
+        st.write(f"**Date prochaine action** : {affair.get('next_action_date') or '-'}")
+        st.write(f"**Blocage** : {affair.get('blockage') or '-'}")
+        st.write(f"**Commentaires** : {affair.get('comments') or '-'}")
 
-    b1, b2, b3, b4 = st.columns(4)
-    with b1:
-        if st.button('📞 Appeler', use_container_width=True):
-            st.info(f"Appelle {client.get('contact1_phone') or client.get('phone') or 'le client'}")
-    with b2:
-        if st.button('✉️ Relancer', use_container_width=True):
-            eml_path, has_attachment = create_eml_draft(affair, client, DATA_DIR / 'drafts')
-            update_affair_after_action(affair['id'], status='Relance', next_action_date=date.today() + timedelta(days=3), log_line='Relance préparée depuis l’app')
-            st.success('Brouillon .eml généré.')
-            if not has_attachment:
-                st.warning('Aucune proposition principale en PDF trouvée. Le brouillon est créé, mais sans PJ.')
-            with open(eml_path, 'rb') as f:
-                st.download_button('Télécharger le brouillon email (.eml)', data=f, file_name=eml_path.name, mime='message/rfc822', use_container_width=True)
-    with b3:
-        if st.button('📅 Planifier', use_container_width=True):
-            update_affair_after_action(affair['id'], next_action_date=date.today() + timedelta(days=2), log_line='Action replanifiée')
-            st.success('Action replanifiée à J+2.')
-    with b4:
-        st.write('')
+        b1, b2, b3, b4 = st.columns(4)
+        with b1:
+            if st.button('📞 Appeler', use_container_width=True):
+                st.info(f"Appelle {client.get('contact1_phone') or client.get('phone') or 'le client'}")
+        with b2:
+            if st.button('✉️ Relancer', use_container_width=True):
+                eml_path, has_attachment = create_eml_draft(affair, client, DATA_DIR / 'drafts')
+                update_affair_after_action(affair['id'], status='Relance', next_action_date=date.today() + timedelta(days=3), log_line='Relance préparée depuis l’app')
+                st.success('Brouillon .eml généré.')
+                if not has_attachment:
+                    st.warning('Aucune proposition principale en PDF trouvée. Le brouillon est créé, mais sans PJ.')
+                with open(eml_path, 'rb') as f:
+                    st.download_button('Télécharger le brouillon email (.eml)', data=f, file_name=eml_path.name, mime='message/rfc822', use_container_width=True)
+        with b3:
+            if st.button('📅 Planifier', use_container_width=True):
+                update_affair_after_action(affair['id'], next_action_date=date.today() + timedelta(days=2), log_line='Action replanifiée')
+                st.success('Action replanifiée à J+2.')
+        with b4:
+            st.write('')
 
-    st.markdown('**Documents liés**')
-    docs = get_documents(affair['id'])
-    if docs.empty:
-        st.info('Aucun document lié.')
-    else:
-        st.dataframe(docs[['filename', 'doc_type', 'is_main_proposal', 'uploaded_at']], use_container_width=True, hide_index=True)
-        for _, doc in docs.iterrows():
-            path = Path(doc['stored_path'])
-            if path.exists():
-                with open(path, 'rb') as f:
-                    st.download_button(f"Télécharger {doc['filename']}", data=f, file_name=doc['filename'], use_container_width=False)
+        st.markdown('**Documents liés**')
+        docs = get_documents(affair['id'])
+        if docs.empty:
+            st.info('Aucun document lié.')
+        else:
+            st.dataframe(docs[['filename', 'doc_type', 'is_main_proposal', 'uploaded_at']], use_container_width=True, hide_index=True)
+            for _, doc in docs.iterrows():
+                path = Path(doc['stored_path'])
+                if path.exists():
+                    with open(path, 'rb') as f:
+                        st.download_button(f"Télécharger {doc['filename']}", data=f, file_name=doc['filename'], use_container_width=False)
 
-    with st.form('upload_doc_form'):
-        uploaded = st.file_uploader('Ajouter un document à cette affaire', type=['pdf', 'docx', 'xlsx', 'png', 'jpg'])
-        doc_type = st.selectbox('Type de document', ['Proposition commerciale', 'Devis', 'Bon de commande', 'Autre'])
-        is_main = st.checkbox('Définir comme proposition principale')
-        submit_doc = st.form_submit_button('Ajouter le document')
-        if submit_doc:
-            if uploaded is None:
-                st.error('Choisis un fichier avant de valider.')
-            else:
-                save_document(affair['id'], uploaded, doc_type, is_main)
-                update_affair_after_action(affair['id'], log_line=f'Document ajouté : {uploaded.name}')
-                st.success('Document ajouté.')
-                st.rerun()
-
+        with st.form('upload_doc_form'):
+            uploaded = st.file_uploader('Ajouter un document à cette affaire', type=['pdf', 'docx', 'xlsx', 'png', 'jpg'])
+            doc_type = st.selectbox('Type de document', ['Proposition commerciale', 'Devis', 'Bon de commande', 'Autre'])
+            is_main = st.checkbox('Définir comme proposition principale')
+            submit_doc = st.form_submit_button('Ajouter le document')
+            if submit_doc:
+                if uploaded is None:
+                    st.error('Choisis un fichier avant de valider.')
+                else:
+                    save_document(affair['id'], uploaded, doc_type, is_main)
+                    update_affair_after_action(affair['id'], log_line=f'Document ajouté : {uploaded.name}')
+                    st.success('Document ajouté.')
+                    st.rerun()
 
 def page_today():
     st.title('Aujourd’hui')
