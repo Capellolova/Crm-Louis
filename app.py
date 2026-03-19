@@ -465,18 +465,9 @@ def section_documents(affaire_id, key_prefix="docs"):
     st.caption("Tu peux y mettre ta proposition, le descriptif du VHL, ou tout autre document utile.")
     col1, col2 = st.columns([2, 1])
     with col1:
-        uploaded = st.file_uploader(
-            "Ajouter un document",
-            type=None,
-            accept_multiple_files=False,
-            key=f"{key_prefix}_uploader_{affaire_id}"
-        )
+        uploaded = st.file_uploader("Ajouter un document", type=None, accept_multiple_files=False, key=f"{key_prefix}_uploader_{affaire_id}")
     with col2:
-        type_doc = st.selectbox(
-            "Type de document",
-            ["Proposition", "Descriptif VHL", "Bon de commande", "Autre"],
-            key=f"{key_prefix}_type_{affaire_id}"
-        )
+        type_doc = st.selectbox("Type de document", ["Proposition", "Descriptif VHL", "Bon de commande", "Autre"], key=f"{key_prefix}_type_{affaire_id}")
 
     if st.button("📎 Enregistrer le document", key=f"{key_prefix}_save_{affaire_id}", use_container_width=True):
         if uploaded is None:
@@ -491,24 +482,19 @@ def section_documents(affaire_id, key_prefix="docs"):
         st.info("Aucun document sur cette affaire.")
     else:
         for _, row in docs.iterrows():
-            with st.container():
-                c1, c2, c3 = st.columns([4, 2, 1])
-                c1.write(f"**{row['nom_document']}**")
-                c2.write(row["type_document"] or "—")
-                try:
-                    with open(row["chemin_fichier"], "rb") as f:
-                        c3.download_button(
-                            "Télécharger",
-                            data=f.read(),
-                            file_name=row["nom_document"],
-                            key=f"download_doc_{row['id']}"
-                        )
-                except Exception:
-                    c3.write("Fichier manquant")
-                if st.button("🗑️ Supprimer", key=f"delete_doc_{row['id']}"):
-                    delete_document(int(row["id"]))
-                    st.success("Document supprimé.")
-                    st.rerun()
+            c1, c2, c3, c4 = st.columns([4, 2, 2, 1])
+            c1.write(f"**{row['nom_document']}**")
+            c2.write(row["type_document"] or "—")
+            c3.write(display_date(row["created_at"]))
+            try:
+                with open(row["chemin_fichier"], "rb") as f:
+                    c4.download_button("Télécharger", data=f.read(), file_name=row["nom_document"], key=f"download_doc_{row['id']}")
+            except Exception:
+                c4.write("Fichier manquant")
+            if st.button("🗑️ Supprimer", key=f"delete_doc_{row['id']}"):
+                delete_document(int(row["id"]))
+                st.success("Document supprimé.")
+                st.rerun()
 
 
 def page_actions_du_jour():
@@ -566,10 +552,11 @@ def page_dashboard():
     st.title("Tableau de bord")
     affaires = fetch_affaires()
     today = datetime.now().strftime("%Y-%m-%d")
-    ca_pipeline = 0.0 if affaires.empty else float(affaires["loyer_mensuel"].fillna(0).sum())
-    affaires_chaudes = 0 if affaires.empty else int(((affaires["priorite"] == "🔥 Chaud") & (~affaires["statut"].isin(list(STATUTS_CLOTURES)))).sum())
-    actions_du_jour = 0 if affaires.empty else int((affaires["date_prochaine_action"] == today).sum())
-    retards = 0 if affaires.empty else int(((affaires["date_prochaine_action"].notna()) & (affaires["date_prochaine_action"] < today) & (~affaires["statut"].isin(list(STATUTS_CLOTURES)))).sum())
+    en_cours = affaires[~affaires["statut"].isin(list(STATUTS_CLOTURES))].copy() if not affaires.empty else affaires
+    ca_pipeline = 0.0 if en_cours.empty else float(en_cours["loyer_mensuel"].fillna(0).sum())
+    affaires_chaudes = 0 if en_cours.empty else int((en_cours["priorite"] == "🔥 Chaud").sum())
+    actions_du_jour = 0 if en_cours.empty else int((en_cours["date_prochaine_action"] == today).sum())
+    retards = 0 if en_cours.empty else int(((en_cours["date_prochaine_action"].notna()) & (en_cours["date_prochaine_action"] < today)).sum())
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("CA pipeline mensuel", f"{ca_pipeline:,.0f} €".replace(",", " "))
     c2.metric("Affaires chaudes", affaires_chaudes)
@@ -584,14 +571,17 @@ def page_clients():
         clients_df = fetch_clients()
         options = ["Nouveau client"] + [f"{row['nom']} (#{row['id']})" for _, row in clients_df.iterrows()]
         selected = st.selectbox("Choisir une fiche client", options, key="client_edit_select")
+        if st.session_state.get("client_edit_selected") != selected:
+            st.session_state["client_edit_selected"] = selected
+
         current = None
         current_id = None
         if selected != "Nouveau client":
             current_id = int(selected.split("#")[-1].replace(")", ""))
             current = clients_df[clients_df["id"] == current_id].iloc[0].to_dict()
 
-        with st.form("form_client_create_edit"):
-            data = client_form(current, key_prefix="client_form")
+        with st.form(f"form_client_create_edit_{current_id or 'new'}"):
+            data = client_form(current, key_prefix=f"client_form_{current_id or 'new'}")
             save_client = st.form_submit_button("💾 Enregistrer le client", use_container_width=True)
 
         if save_client:
@@ -604,9 +594,9 @@ def page_clients():
                 st.rerun()
 
         if current_id is not None:
-            delete_related = st.checkbox("Supprimer aussi ses affaires", key="delete_related_client")
-            confirm = st.checkbox("Confirmer la suppression du client", key="confirm_delete_client")
-            if st.button("🗑️ Supprimer le client", use_container_width=True, key="delete_client_btn", disabled=not confirm):
+            delete_related = st.checkbox("Supprimer aussi ses affaires", key=f"delete_related_client_{current_id}")
+            confirm = st.checkbox("Confirmer la suppression du client", key=f"confirm_delete_client_{current_id}")
+            if st.button("🗑️ Supprimer le client", use_container_width=True, key=f"delete_client_btn_{current_id}", disabled=not confirm):
                 delete_client(current_id, delete_related=delete_related)
                 st.success("Client supprimé.")
                 st.rerun()
@@ -618,11 +608,13 @@ def page_clients():
             return
         labels = [f"{row['nom']} (#{row['id']})" for _, row in clients_df.iterrows()]
         choice = st.selectbox("Ouvrir une fiche client", labels, key="follow_client_select")
+        if st.session_state.get("follow_client_selected") != choice:
+            st.session_state["follow_client_selected"] = choice
         client_id = int(choice.split("#")[-1].replace(")", ""))
         current = clients_df[clients_df["id"] == client_id].iloc[0].to_dict()
 
-        with st.form("form_client_follow"):
-            data = client_form(current, key_prefix="client_follow_form")
+        with st.form(f"form_client_follow_{client_id}"):
+            data = client_form(current, key_prefix=f"client_follow_form_{client_id}")
             save_follow = st.form_submit_button("💾 Enregistrer depuis le suivi", use_container_width=True)
 
         if save_follow:
@@ -633,9 +625,9 @@ def page_clients():
                 st.success("Client mis à jour.")
                 st.rerun()
 
-        delete_related2 = st.checkbox("Supprimer aussi ses affaires ", key="delete_related_client2")
-        confirm2 = st.checkbox("Confirmer la suppression ", key="confirm_delete_client2")
-        if st.button("🗑️ Supprimer cette fiche client", use_container_width=True, key="delete_client_follow_btn", disabled=not confirm2):
+        delete_related2 = st.checkbox("Supprimer aussi ses affaires ", key=f"delete_related_client2_{client_id}")
+        confirm2 = st.checkbox("Confirmer la suppression ", key=f"confirm_delete_client2_{client_id}")
+        if st.button("🗑️ Supprimer cette fiche client", use_container_width=True, key=f"delete_client_follow_btn_{client_id}", disabled=not confirm2):
             delete_client(client_id, delete_related=delete_related2)
             st.success("Client supprimé.")
             st.rerun()
@@ -650,14 +642,17 @@ def page_affaires():
         affaires_df = fetch_affaires()
         options = ["Nouvelle affaire"] + [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_df.iterrows()]
         selected = st.selectbox("Choisir un dossier affaire", options, key="affaire_edit_select")
+        if st.session_state.get("affaire_edit_selected") != selected:
+            st.session_state["affaire_edit_selected"] = selected
+
         current = None
         current_id = None
         if selected != "Nouvelle affaire":
             current_id = int(selected.split(" - ")[0].replace("#", ""))
             current = affaires_df[affaires_df["id"] == current_id].iloc[0].to_dict()
 
-        with st.form("form_affaire_create_edit"):
-            data = affaire_form(clients_df, current, key_prefix="affaire_form")
+        with st.form(f"form_affaire_create_edit_{current_id or 'new'}"):
+            data = affaire_form(clients_df, current, key_prefix=f"affaire_form_{current_id or 'new'}")
             save_affaire = st.form_submit_button("💾 Enregistrer l'affaire", use_container_width=True)
 
         if save_affaire:
@@ -667,9 +662,9 @@ def page_affaires():
             st.rerun()
 
         if current_id is not None:
-            section_documents(current_id, key_prefix="create_docs")
-            confirm = st.checkbox("Confirmer la suppression de l'affaire", key="confirm_delete_affaire")
-            if st.button("🗑️ Supprimer l'affaire", use_container_width=True, key="delete_affaire_btn", disabled=not confirm):
+            section_documents(current_id, key_prefix=f"create_docs_{current_id}")
+            confirm = st.checkbox("Confirmer la suppression de l'affaire", key=f"confirm_delete_affaire_{current_id}")
+            if st.button("🗑️ Supprimer l'affaire", use_container_width=True, key=f"delete_affaire_btn_{current_id}", disabled=not confirm):
                 delete_affaire(current_id)
                 st.success("Affaire supprimée.")
                 st.rerun()
@@ -682,19 +677,19 @@ def page_affaires():
             st.info("Aucune affaire pour le moment.")
             return
 
+        label_list = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_df.iterrows()]
+        default_index = 0
         if "last_affaire_id" in st.session_state:
             last_id = st.session_state["last_affaire_id"]
-            default_index = 0
-            label_list = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_df.iterrows()]
             for i, (_, row) in enumerate(affaires_df.iterrows()):
                 if int(row["id"]) == int(last_id):
                     default_index = i
                     break
-        else:
-            default_index = 0
-            label_list = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_df.iterrows()]
 
         selected = st.selectbox("Ouvrir un dossier affaire", label_list, index=default_index, key="follow_affaire_select")
+        if st.session_state.get("follow_affaire_selected") != selected:
+            st.session_state["follow_affaire_selected"] = selected
+
         affaire_id = int(selected.split(" - ")[0].replace("#", ""))
         current = affaires_df[affaires_df["id"] == affaire_id].iloc[0].to_dict()
 
@@ -707,8 +702,8 @@ def page_affaires():
         </div>
         """, unsafe_allow_html=True)
 
-        with st.form("form_affaire_follow"):
-            data = affaire_form(clients_df, current, key_prefix="affaire_follow_form")
+        with st.form(f"form_affaire_follow_{affaire_id}"):
+            data = affaire_form(clients_df, current, key_prefix=f"affaire_follow_form_{affaire_id}")
             save_follow_affaire = st.form_submit_button("💾 Enregistrer depuis le suivi", use_container_width=True)
 
         if save_follow_affaire:
@@ -716,10 +711,10 @@ def page_affaires():
             st.success("Affaire mise à jour.")
             st.rerun()
 
-        section_documents(affaire_id, key_prefix="follow_docs")
+        section_documents(affaire_id, key_prefix=f"follow_docs_{affaire_id}")
 
-        confirm = st.checkbox("Confirmer la suppression du dossier", key="confirm_delete_affaire_follow")
-        if st.button("🗑️ Supprimer ce dossier", use_container_width=True, key="delete_follow_affaire_btn", disabled=not confirm):
+        confirm = st.checkbox("Confirmer la suppression du dossier", key=f"confirm_delete_affaire_follow_{affaire_id}")
+        if st.button("🗑️ Supprimer ce dossier", use_container_width=True, key=f"delete_follow_affaire_btn_{affaire_id}", disabled=not confirm):
             delete_affaire(affaire_id)
             st.success("Affaire supprimée.")
             st.rerun()
@@ -748,18 +743,68 @@ def page_stats():
     if affaires.empty:
         st.info("Pas encore de données.")
         return
+
     affaires["total_estime"] = affaires["duree_mois"].fillna(0) * affaires["loyer_mensuel"].fillna(0)
-    c1, c2, c3 = st.columns(3)
+    affaires_en_cours = affaires[~affaires["statut"].isin(["Perdu"])].copy()
+    affaires_ouvertes = affaires[~affaires["statut"].isin(list(STATUTS_CLOTURES))].copy()
+
+    taux_transfo = 0
+    total_cloturees = len(affaires[affaires["statut"].isin(list(STATUTS_CLOTURES))])
+    if total_cloturees > 0:
+        taux_transfo = round((len(affaires[affaires["statut"] == "Gagné"]) / total_cloturees) * 100, 1)
+
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Affaires totales", int(len(affaires)))
-    c2.metric("Affaires gagnées", int((affaires["statut"] == "Gagné").sum()))
-    c3.metric("Montant total estimé", f"{affaires['total_estime'].sum():,.0f} €".replace(",", " "))
+    c2.metric("Affaires ouvertes", int(len(affaires_ouvertes)))
+    c3.metric("Taux de transformation", f"{taux_transfo} %")
+    c4.metric("Montant total estimé", f"{affaires_en_cours['total_estime'].sum():,.0f} €".replace(",", " "))
+
+    c5, c6, c7, c8 = st.columns(4)
+    c5.metric("Montant moyen / affaire ouverte", f"{(affaires_ouvertes['total_estime'].mean() if not affaires_ouvertes.empty else 0):,.0f} €".replace(",", " "))
+    c6.metric("Affaires perdues", int((affaires["statut"] == "Perdu").sum()))
+    c7.metric("Affaires gagnées", int((affaires["statut"] == "Gagné").sum()))
+    c8.metric("AO / SAD", int((affaires["type_opportunite"] == "AO / SAD").sum()))
+
+    st.markdown("### Répartition par gamme")
+    rep = affaires_ouvertes.groupby("gamme", dropna=False).agg(
+        nombre=("id", "count"),
+        montant_total=("total_estime", "sum")
+    ).reset_index()
+    rep.columns = ["Gamme", "Nombre", "Montant total"]
+    st.dataframe(rep, use_container_width=True, hide_index=True)
+
+    st.markdown("### Répartition par statut")
+    rep2 = affaires.groupby("statut", dropna=False).agg(nombre=("id", "count")).reset_index()
+    rep2.columns = ["Statut", "Nombre"]
+    st.dataframe(rep2, use_container_width=True, hide_index=True)
+
+    st.markdown("### Blocages principaux")
+    rep3 = affaires_ouvertes.groupby("blocage_principal", dropna=False).agg(nombre=("id", "count")).reset_index()
+    rep3.columns = ["Blocage principal", "Nombre"]
+    rep3 = rep3.sort_values("Nombre", ascending=False)
+    st.dataframe(rep3, use_container_width=True, hide_index=True)
+
+    st.markdown("### Répartition par type d'opportunité")
+    rep4 = affaires_ouvertes.groupby("type_opportunite", dropna=False).agg(
+        nombre=("id", "count"),
+        montant_total=("total_estime", "sum")
+    ).reset_index()
+    rep4.columns = ["Type opportunité", "Nombre", "Montant total"]
+    st.dataframe(rep4, use_container_width=True, hide_index=True)
+
+    st.markdown("### Top 10 affaires ouvertes")
+    top10 = affaires_ouvertes.sort_values("total_estime", ascending=False).head(10)
     st.dataframe(
-        affaires[["id", "client_nom", "gamme", "carrosserie", "energie", "statut", "total_estime"]]
-        .rename(columns={"id":"ID", "client_nom":"Client", "gamme":"Gamme", "carrosserie":"Carrosserie", "energie":"Énergie", "statut":"Statut", "total_estime":"Montant total"}),
+        top10[["id", "client_nom", "gamme", "carrosserie", "energie", "statut", "priorite", "total_estime"]]
+        .rename(columns={
+            "id":"ID", "client_nom":"Client", "gamme":"Gamme", "carrosserie":"Carrosserie",
+            "energie":"Énergie", "statut":"Statut", "priorite":"Priorité", "total_estime":"Montant total"
+        }),
         use_container_width=True,
         hide_index=True
     )
-    st.caption("Note : les documents ajoutés dans Streamlit Cloud sont stockés dans l'app, mais peuvent être perdus après certains redéploiements/redémarrages.")
+
+    st.caption("Le montant total estimé exclut les affaires perdues.")
 
 
 def main():
