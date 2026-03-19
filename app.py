@@ -709,57 +709,69 @@ def page_affaires():
                 temp = temp[mask]
             return temp
 
+
         def render_affaire_section(df, section_key, editable=True, show_documents=True):
             df = apply_filter(df)
             if df.empty:
                 st.info("Aucun dossier ici.")
                 return
 
-            labels = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in df.iterrows()]
-            selected = st.radio("Choisir un dossier", labels, key=f"{section_key}_radio", label_visibility="collapsed")
-            affaire_id = int(selected.split(" - ")[0].replace("#", ""))
-            current = df[df["id"] == affaire_id].iloc[0].to_dict()
+            # Classement par date de prochaine action :
+            # d'abord les dossiers avec date renseignée, puis les vides, le tout par date croissante
+            temp = df.copy()
+            temp["_date_tri"] = pd.to_datetime(temp["date_prochaine_action"], errors="coerce")
+            temp["_date_vide"] = temp["_date_tri"].isna()
+            temp = temp.sort_values(by=["_date_vide", "_date_tri", "id"], ascending=[True, True, False])
 
-            st.markdown("---")
-            st.markdown(f"### Dossier #{affaire_id} — {current.get('client_nom') or 'Sans client'}")
-            st.markdown(f"""
-            <div class="card">
-                <b>{current.get('client_nom') or 'Sans client'}</b><br>
-                {current.get('gamme','')} - {current.get('carrosserie','')} - {current.get('energie','')}<br>
-                Statut : {current.get('statut','')} | Priorité : {current.get('priorite','')}<br>
-                Action : {current.get('action_suivante','')} | Prochaine action : {display_date(current.get('date_prochaine_action'))}
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown("### Dossiers")
+            for _, row in temp.iterrows():
+                affaire_id = int(row["id"])
+                total_est = safe_int(row.get("duree_mois"), 0) * safe_float(row.get("loyer_mensuel"), 0.0)
+                label = f"#{affaire_id} - {row.get('client_nom') or 'Sans client'}"
+                info_line = f"{row.get('gamme','')} - {row.get('carrosserie','')} - {row.get('energie','')}"
+                status_line = f"Statut : {row.get('statut','')} | Priorité : {row.get('priorite','')}"
+                action_line = f"Action : {row.get('action_suivante','')} | Prochaine action : {display_date(row.get('date_prochaine_action')) or '—'}"
+                exp_title = f"{label} | {row.get('statut','')} | {display_date(row.get('date_prochaine_action')) or 'Sans date'}"
 
-            if editable:
-                with st.form(f"form_{section_key}_{affaire_id}"):
-                    data = affaire_form(clients_df, current, key_prefix=f"{section_key}_form_{affaire_id}")
-                    save_btn = st.form_submit_button("💾 Enregistrer les modifications", use_container_width=True)
+                with st.expander(exp_title, expanded=False):
+                    current = row.to_dict()
 
-                if save_btn:
-                    upsert_affaire(affaire_id, data)
-                    st.success("Affaire mise à jour.")
-                    st.rerun()
+                    st.markdown(f"""
+                    <div class="card">
+                        <b>{row.get('client_nom') or 'Sans client'}</b><br>
+                        {info_line}<br>
+                        {status_line}<br>
+                        Total estimé : {total_est:,.0f} €<br>
+                        {action_line}
+                    </div>
+                    """.replace(",", " "), unsafe_allow_html=True)
 
-                if show_documents:
-                    section_documents(affaire_id, key_prefix=f"{section_key}_docs_{affaire_id}")
+                    if editable:
+                        with st.form(f"form_{section_key}_{affaire_id}"):
+                            data = affaire_form(clients_df, current, key_prefix=f"{section_key}_form_{affaire_id}")
+                            save_btn = st.form_submit_button("💾 Enregistrer les modifications", use_container_width=True)
 
-                confirm = st.checkbox("Confirmer la suppression du dossier", key=f"{section_key}_delete_confirm_{affaire_id}")
-                if st.button("🗑️ Supprimer ce dossier", use_container_width=True, key=f"{section_key}_delete_btn_{affaire_id}", disabled=not confirm):
-                    delete_affaire(affaire_id)
-                    st.success("Affaire supprimée.")
-                    st.rerun()
-            else:
-                total_est = safe_int(current.get("duree_mois"), 0) * safe_float(current.get("loyer_mensuel"), 0.0)
-                st.markdown(f"""
-                <div class="card">
-                    Total estimé : {total_est:,.0f} €<br>
-                    Concurrent : {current.get('concurrent','') or '—'}<br>
-                    Contrat / BDC : {current.get('contrat_bdc','') or '—'}<br>
-                    Notes : {current.get('notes','') or '—'}
-                </div>
-                """.replace(",", " "), unsafe_allow_html=True)
+                        if save_btn:
+                            upsert_affaire(affaire_id, data)
+                            st.success("Affaire mise à jour.")
+                            st.rerun()
 
+                        if show_documents:
+                            section_documents(affaire_id, key_prefix=f"{section_key}_docs_{affaire_id}")
+
+                        confirm = st.checkbox("Confirmer la suppression du dossier", key=f"{section_key}_delete_confirm_{affaire_id}")
+                        if st.button("🗑️ Supprimer ce dossier", use_container_width=True, key=f"{section_key}_delete_btn_{affaire_id}", disabled=not confirm):
+                            delete_affaire(affaire_id)
+                            st.success("Affaire supprimée.")
+                            st.rerun()
+                    else:
+                        st.markdown(f"""
+                        <div class="card">
+                            Concurrent : {row.get('concurrent','') or '—'}<br>
+                            Contrat / BDC : {row.get('contrat_bdc','') or '—'}<br>
+                            Notes : {row.get('notes','') or '—'}
+                        </div>
+                        """, unsafe_allow_html=True)
         with sous1:
             render_affaire_section(affaires_ouvertes_df, "encours", editable=True, show_documents=True)
         with sous2:
