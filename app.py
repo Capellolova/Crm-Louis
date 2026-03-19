@@ -17,20 +17,20 @@ TYPES_OPP = ["Prospect", "Client existant", "Renouvellement", "AO / SAD"]
 STATUTS = [
     "Définition du besoin", "Chiffrage en cours", "Rendez-vous", "Faire proposition",
     "Proposition envoyée", "Relance", "Contre-proposition",
-    "Accord client", "Commande en cours", "Gagné", "Perdu", "Stand-by"
+    "Accord client", "Commande en cours", "Gagné", "Livré / Terminé", "Perdu", "Stand-by"
 ]
 ACTIONS = [
     "Appeler", "Rendez-vous", "Relancer mail", "Envoyer proposition", "Refaire chiffrage",
     "Prendre RDV", "Attendre retour client", "Attendre validation interne",
     "Commander véhicule", "Signature contrat", "Récupération dépôt de garantie + SEPA",
-    "Livraison", "Clôturer gagné", "Clôturer perdu"
+    "Livraison", "Dossier terminé", "Clôturer gagné", "Clôturer perdu"
 ]
 BLOCAGES = [
     "Prix", "Délais", "Pas de besoin immédiat", "Décision interne client",
     "Attente budget", "Concurrent en place", "Caractéristique véhicule",
     "Financement", "Validation hiérarchique", "Inconnu"
 ]
-STATUTS_CLOTURES = {"Gagné", "Perdu"}
+STATUTS_CLOTURES = {"Gagné", "Livré / Terminé", "Perdu"}
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
@@ -679,8 +679,9 @@ def page_affaires():
             st.info("Aucune affaire pour le moment.")
             return
 
-        affaires_ouvertes_df = affaires_df[~affaires_df["statut"].isin(["Perdu", "Gagné"])].copy()
+        affaires_ouvertes_df = affaires_df[~affaires_df["statut"].isin(["Perdu", "Gagné", "Livré / Terminé"])].copy()
         affaires_gagnees_df = affaires_df[affaires_df["statut"] == "Gagné"].copy()
+        affaires_terminees_df = affaires_df[affaires_df["statut"] == "Livré / Terminé"].copy()
         affaires_perdues_df = affaires_df[affaires_df["statut"] == "Perdu"].copy()
 
         label_list = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_ouvertes_df.iterrows()]
@@ -742,11 +743,40 @@ def page_affaires():
             </div>
             """.replace(",", " "), unsafe_allow_html=True)
 
-        with st.expander(f"Affaires gagnées en attente de livraison / suivi ({len(affaires_gagnees_df)})"):
+        with st.expander(f"Affaires gagnées - suivi livraison / administratif ({len(affaires_gagnees_df)})"):
             if affaires_gagnees_df.empty:
-                st.info("Aucune affaire gagnée.")
+                st.info("Aucune affaire gagnée en suivi.")
             else:
-                for _, row in affaires_gagnees_df.iterrows():
+                labels_gagnees = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('action_suivante') or row.get('statut')}" for _, row in affaires_gagnees_df.iterrows()]
+                selected_gagnee = st.selectbox("Ouvrir un dossier gagné en suivi", labels_gagnees, key="follow_affaire_gagnee_select")
+                affaire_gagnee_id = int(selected_gagnee.split(" - ")[0].replace("#", ""))
+                current_gagnee = affaires_gagnees_df[affaires_gagnees_df["id"] == affaire_gagnee_id].iloc[0].to_dict()
+
+                st.markdown(f"""
+                <div class="card">
+                    <b>{current_gagnee.get('client_nom') or 'Sans client'}</b><br>
+                    {current_gagnee.get('gamme','')} - {current_gagnee.get('carrosserie','')} - {current_gagnee.get('energie','')}<br>
+                    Statut : {current_gagnee.get('statut','')} | Action : {current_gagnee.get('action_suivante','')}<br>
+                    Prochaine action : {display_date(current_gagnee.get('date_prochaine_action'))}
+                </div>
+                """, unsafe_allow_html=True)
+
+                with st.form(f"form_affaire_gagnee_follow_{affaire_gagnee_id}"):
+                    data_gagnee = affaire_form(clients_df, current_gagnee, key_prefix=f"affaire_gagnee_follow_form_{affaire_gagnee_id}")
+                    save_gagnee = st.form_submit_button("💾 Enregistrer le suivi gagné", use_container_width=True)
+
+                if save_gagnee:
+                    upsert_affaire(affaire_gagnee_id, data_gagnee)
+                    st.success("Affaire gagnée mise à jour.")
+                    st.rerun()
+
+                section_documents(affaire_gagnee_id, key_prefix=f"won_docs_{affaire_gagnee_id}")
+
+        with st.expander(f"Affaires gagnées - dossiers terminés ({len(affaires_terminees_df)})"):
+            if affaires_terminees_df.empty:
+                st.info("Aucun dossier terminé.")
+            else:
+                for _, row in affaires_terminees_df.iterrows():
                     total_est = safe_int(row.get("duree_mois"), 0) * safe_float(row.get("loyer_mensuel"), 0.0)
                     st.markdown(f"""
                     <div class="card">
