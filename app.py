@@ -811,13 +811,24 @@ def page_stats():
         return
 
     affaires["total_estime"] = affaires["duree_mois"].fillna(0) * affaires["loyer_mensuel"].fillna(0)
-    affaires_en_cours = affaires[~affaires["statut"].isin(["Perdu"])].copy()
-    affaires_ouvertes = affaires[~affaires["statut"].isin(list(STATUTS_CLOTURES))].copy()
+
+    # Logique stats :
+    # - Gagnées commercialement = Gagné + Livré / Terminé
+    # - Perdues = Perdu
+    # - Ouvertes = tout le reste
+    affaires_gagnees_stats = affaires[affaires["statut"].isin(["Gagné", "Livré / Terminé"])].copy()
+    affaires_gagnees_a_livrer = affaires[affaires["statut"] == "Gagné"].copy()
+    affaires_gagnees_terminees = affaires[affaires["statut"] == "Livré / Terminé"].copy()
+    affaires_perdues = affaires[affaires["statut"] == "Perdu"].copy()
+    affaires_ouvertes = affaires[~affaires["statut"].isin(["Gagné", "Livré / Terminé", "Perdu"])].copy()
+
+    # Montant total estimé = toutes les affaires sauf perdues
+    affaires_en_cours = affaires[affaires["statut"] != "Perdu"].copy()
 
     taux_transfo = 0
-    total_cloturees = len(affaires[affaires["statut"].isin(list(STATUTS_CLOTURES))])
+    total_cloturees = len(affaires_gagnees_stats) + len(affaires_perdues)
     if total_cloturees > 0:
-        taux_transfo = round((len(affaires[affaires["statut"] == "Gagné"]) / total_cloturees) * 100, 1)
+        taux_transfo = round((len(affaires_gagnees_stats) / total_cloturees) * 100, 1)
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Affaires totales", int(len(affaires)))
@@ -827,9 +838,13 @@ def page_stats():
 
     c5, c6, c7, c8 = st.columns(4)
     c5.metric("Montant moyen / affaire ouverte", f"{(affaires_ouvertes['total_estime'].mean() if not affaires_ouvertes.empty else 0):,.0f} €".replace(",", " "))
-    c6.metric("Affaires perdues", int((affaires["statut"] == "Perdu").sum()))
-    c7.metric("Affaires gagnées", int((affaires["statut"] == "Gagné").sum()))
+    c6.metric("Affaires perdues", int(len(affaires_perdues)))
+    c7.metric("Affaires gagnées total", int(len(affaires_gagnees_stats)))
     c8.metric("AO / SAD", int((affaires["type_opportunite"] == "AO / SAD").sum()))
+
+    c9, c10 = st.columns(2)
+    c9.metric("Gagnées à livrer / suivre", int(len(affaires_gagnees_a_livrer)))
+    c10.metric("Gagnées terminées", int(len(affaires_gagnees_terminees)))
 
     st.markdown("### Répartition par gamme")
     rep = affaires_ouvertes.groupby("gamme", dropna=False).agg(
@@ -870,7 +885,7 @@ def page_stats():
         hide_index=True
     )
 
-    st.caption("Le montant total estimé exclut les affaires perdues.")
+    st.caption("Les stats commerciales comptent comme gagnées : Gagné + Livré / Terminé. Le montant total estimé exclut uniquement les affaires perdues.")
 
 
 def main():
