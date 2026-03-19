@@ -91,6 +91,8 @@ def init_db():
                 address TEXT,
                 city TEXT,
                 postal_code TEXT,
+                siret TEXT,
+                naf TEXT,
                 phone TEXT,
                 email TEXT,
                 client_status TEXT,
@@ -157,6 +159,13 @@ def init_db():
                 FOREIGN KEY(affair_id) REFERENCES affairs(id)
             )'''
         )
+
+        # Ajout de colonnes si la base existe déjà sur une ancienne version
+        existing_cols = {row[1] for row in cur.execute("PRAGMA table_info(clients)").fetchall()}
+        if 'siret' not in existing_cols:
+            cur.execute("ALTER TABLE clients ADD COLUMN siret TEXT")
+        if 'naf' not in existing_cols:
+            cur.execute("ALTER TABLE clients ADD COLUMN naf TEXT")
         conn.commit()
 
 
@@ -394,7 +403,7 @@ def upsert_client(data):
         exists = cur.execute('SELECT 1 FROM clients WHERE id = ?', (client_id,)).fetchone()
         payload = (
             client_id, data['name'], data.get('sector'), data.get('account_type'), data.get('address'), data.get('city'),
-            data.get('postal_code'), data.get('phone'), data.get('email'), data.get('client_status'), data.get('potential'),
+            data.get('postal_code'), data.get('siret'), data.get('naf'), data.get('phone'), data.get('email'), data.get('client_status'), data.get('potential'),
             data.get('competitor'), data.get('notes'), data.get('contact1_name'), data.get('contact1_role'),
             data.get('contact1_title'), data.get('contact1_phone'), data.get('contact1_email'), data.get('contact1_notes'),
             data.get('contact2_name'), data.get('contact2_role'), data.get('contact2_title'), data.get('contact2_phone'),
@@ -402,7 +411,7 @@ def upsert_client(data):
         )
         if exists:
             cur.execute('''UPDATE clients SET
-                name=?, sector=?, account_type=?, address=?, city=?, postal_code=?, phone=?, email=?, client_status=?,
+                name=?, sector=?, account_type=?, address=?, city=?, postal_code=?, siret=?, naf=?, phone=?, email=?, client_status=?,
                 potential=?, competitor=?, notes=?, contact1_name=?, contact1_role=?, contact1_title=?, contact1_phone=?,
                 contact1_email=?, contact1_notes=?, contact2_name=?, contact2_role=?, contact2_title=?, contact2_phone=?,
                 contact2_email=?, contact2_notes=?, updated_at=? WHERE id=?''',
@@ -410,11 +419,11 @@ def upsert_client(data):
             )
         else:
             cur.execute('''INSERT INTO clients (
-                id, name, sector, account_type, address, city, postal_code, phone, email, client_status, potential,
+                id, name, sector, account_type, address, city, postal_code, siret, naf, phone, email, client_status, potential,
                 competitor, notes, contact1_name, contact1_role, contact1_title, contact1_phone, contact1_email,
                 contact1_notes, contact2_name, contact2_role, contact2_title, contact2_phone, contact2_email,
                 contact2_notes, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                 payload + (ts, ts)
             )
         conn.commit()
@@ -457,6 +466,46 @@ def upsert_affair(data):
         conn.commit()
     return affair_id
 
+
+
+
+def delete_affair(affair_id):
+    if not affair_id:
+        return
+    with closing(get_conn()) as conn:
+        cur = conn.cursor()
+        docs = cur.execute('SELECT stored_path FROM documents WHERE affair_id = ?', (affair_id,)).fetchall()
+        for row in docs:
+            try:
+                Path(row[0]).unlink(missing_ok=True)
+            except Exception:
+                pass
+        cur.execute('DELETE FROM documents WHERE affair_id = ?', (affair_id,))
+        cur.execute('DELETE FROM affairs WHERE id = ?', (affair_id,))
+        conn.commit()
+
+
+def delete_client(client_id, delete_linked_affairs=False):
+    if not client_id:
+        return
+    with closing(get_conn()) as conn:
+        cur = conn.cursor()
+        if delete_linked_affairs:
+            linked_affairs = cur.execute('SELECT id FROM affairs WHERE client_id = ?', (client_id,)).fetchall()
+            for row in linked_affairs:
+                aid = row[0]
+                docs = cur.execute('SELECT stored_path FROM documents WHERE affair_id = ?', (aid,)).fetchall()
+                for doc in docs:
+                    try:
+                        Path(doc[0]).unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                cur.execute('DELETE FROM documents WHERE affair_id = ?', (aid,))
+                cur.execute('DELETE FROM affairs WHERE id = ?', (aid,))
+        else:
+            cur.execute('UPDATE affairs SET client_id = NULL WHERE client_id = ?', (client_id,))
+        cur.execute('DELETE FROM clients WHERE id = ?', (client_id,))
+        conn.commit()
 
 def save_document(affair_id, uploaded_file, doc_type, is_main_proposal):
     ext = Path(uploaded_file.name).suffix or '.bin'
@@ -713,6 +762,8 @@ def page_clients():
                 address = st.text_input('Adresse', value=current.get('address') or '')
                 city = st.text_input('Ville', value=current.get('city') or '')
                 postal_code = st.text_input('Code postal', value=current.get('postal_code') or '')
+                siret = st.text_input('SIRET', value=current.get('siret') or '')
+                naf = st.text_input('Code NAF', value=current.get('naf') or '')
                 phone = st.text_input('Téléphone standard', value=current.get('phone') or '')
                 email = st.text_input('Email générique', value=current.get('email') or '')
             st.markdown('**Contact clé 1**')
@@ -745,7 +796,7 @@ def page_clients():
                 else:
                     cid = upsert_client({
                         'id': current.get('id'), 'name': name.strip(), 'sector': sector, 'account_type': account_type,
-                        'address': address, 'city': city, 'postal_code': postal_code, 'phone': phone, 'email': email,
+                        'address': address, 'city': city, 'postal_code': postal_code, 'siret': siret, 'naf': naf, 'phone': phone, 'email': email,
                         'client_status': client_status, 'potential': potential, 'competitor': competitor, 'notes': notes,
                         'contact1_name': contact1_name, 'contact1_role': contact1_role, 'contact1_title': contact1_title,
                         'contact1_phone': contact1_phone, 'contact1_email': contact1_email, 'contact1_notes': contact1_notes,
@@ -753,6 +804,24 @@ def page_clients():
                         'contact2_phone': contact2_phone, 'contact2_email': contact2_email, 'contact2_notes': contact2_notes,
                     })
                     st.success(f'Client enregistré : {name}')
+                    st.rerun()
+
+        if current.get('id'):
+            st.markdown('---')
+            st.markdown('**Suppression du client**')
+            linked_count = 0
+            if not affairs.empty:
+                linked_count = int((affairs['client_id'] == current.get('id')).sum())
+            if linked_count > 0:
+                st.warning(f"Ce client a {linked_count} affaire(s) liée(s). Tu peux soit supprimer uniquement le client, soit supprimer aussi ses affaires et documents.")
+            confirm_delete_client = st.checkbox("Je confirme la suppression de ce client", key=f"confirm_delete_client_{current.get('id')}")
+            delete_linked_affairs = st.checkbox("Supprimer aussi les affaires et documents liés", key=f"delete_linked_affairs_{current.get('id')}") if linked_count > 0 else False
+            if st.button('🗑️ Supprimer ce client', type='secondary', key=f"delete_client_btn_{current.get('id')}"):
+                if not confirm_delete_client:
+                    st.error("Coche la confirmation avant de supprimer.")
+                else:
+                    delete_client(current.get('id'), delete_linked_affairs)
+                    st.success('Client supprimé.')
                     st.rerun()
 
     st.subheader('Base clients')
@@ -775,6 +844,9 @@ def page_clients():
         a.write(f"**Statut** : {client.get('client_status') or '-'}")
         b.write(f"**Potentiel** : {client.get('potential') or '-'}")
         c.write(f"**Concurrent** : {client.get('competitor') or '-'}")
+        d, e = st.columns(2)
+        d.write(f"**SIRET** : {client.get('siret') or '-'}")
+        e.write(f"**Code NAF** : {client.get('naf') or '-'}")
         st.write(f"**Contact 1** : {client.get('contact1_name') or '-'} — {client.get('contact1_title') or '-'} — {client.get('contact1_email') or '-'}")
         st.write(f"**Contact 2** : {client.get('contact2_name') or '-'} — {client.get('contact2_title') or '-'} — {client.get('contact2_email') or '-'}")
         st.write(f"**Notes** : {client.get('notes') or '-'}")
@@ -799,42 +871,56 @@ def page_affairs():
             idx = name_options.index(selected) - 1
             current = affairs.iloc[idx].to_dict()
         with st.form('affair_form'):
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                client_options = clients['name'].tolist() if not clients.empty else ['Aucun client disponible']
-                client_idx = 0
-                if not clients.empty and current.get('client_id') in set(clients['id']):
-                    match_positions = clients.index[clients['id'] == current.get('client_id')].tolist()
-                    if match_positions:
-                        client_idx = int(match_positions[0])
-                client_name = st.selectbox('Client lié', client_options, index=client_idx, disabled=clients.empty)
-                priority = st.selectbox('Priorité', PRIORITIES, index=safe_index(PRIORITIES, current.get('priority'), 1))
-                created_on = st.date_input('Date de création', value=coerce_date(current.get('created_on')))
-                assigned_to = st.text_input('Commercial assigné', value=current.get('assigned_to') or 'Louis')
-                opportunity_type = st.selectbox('Type opportunité', TYPE_OPPS, index=safe_index(TYPE_OPPS, current.get('opportunity_type'), 0))
-            with c2:
-                gamme = st.selectbox('Gamme', GAMMES, index=safe_index(GAMMES, current.get('gamme'), 0))
-                ptac = st.text_input('PTAC', value=current.get('ptac') or '')
-                bodywork = st.selectbox('Carrosserie', CARROSSERIES, index=safe_index(CARROSSERIES, current.get('bodywork'), 0))
-                energy = st.selectbox('Énergie', ENERGIES, index=safe_index(ENERGIES, current.get('energy'), 0))
-            with c3:
-                vn_parc = st.text_input('VN / Parc', value=current.get('vn_parc') or '')
-                duration_months = st.number_input('Durée (mois)', min_value=0, step=1, value=coerce_int(current.get('duration_months'), 0))
-                annual_km = st.number_input('Km/an', min_value=0, step=1000, value=coerce_int(current.get('annual_km'), 0))
-                monthly_rent = st.number_input('Loyer mensuel €', min_value=0.0, step=10.0, value=coerce_float(current.get('monthly_rent'), 0.0))
-            s1, s2, s3 = st.columns(3)
-            with s1:
-                status = st.selectbox('Statut', STATUSES, index=STATUSES.index(current.get('status')) if current.get('status') in STATUSES else 0)
-                proposal_sent_on = st.date_input('Date envoi proposition', value=coerce_date(current.get('proposal_sent_on')))
-                next_action_date = st.date_input('Date prochaine action', value=coerce_date(current.get('next_action_date')))
-            with s2:
-                next_action = st.selectbox('Action suivante', ACTIONS, index=ACTIONS.index(current.get('next_action')) if current.get('next_action') in ACTIONS else 0)
-                blockage = st.selectbox('Blocage principal', BLOCKAGES, index=BLOCKAGES.index(current.get('blockage')) if current.get('blockage') in BLOCKAGES else 0)
-                competitor = st.text_input('Concurrent', value=current.get('competitor') or '')
-            with s3:
-                contract_ref = st.text_input('Contrat / BDC', value=current.get('contract_ref') or '')
-                ao_deadline = st.date_input('Deadline AO', value=coerce_date(current.get('ao_deadline')))
-            comments = st.text_area('Commentaires', value=current.get('comments') or '')
+            tab_infos, tab_notes = st.tabs(['Informations', 'Notes'])
+            with tab_infos:
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    client_options = clients['name'].tolist() if not clients.empty else ['Aucun client disponible']
+                    client_idx = 0
+                    if not clients.empty and current.get('client_id') in set(clients['id']):
+                        match_positions = clients.index[clients['id'] == current.get('client_id')].tolist()
+                        if match_positions:
+                            client_idx = int(match_positions[0])
+                    client_name = st.selectbox('Client lié', client_options, index=client_idx, disabled=clients.empty)
+                    priority = st.selectbox('Priorité', PRIORITIES, index=safe_index(PRIORITIES, current.get('priority'), 1))
+                    created_on = st.date_input('Date de création', value=coerce_date(current.get('created_on')))
+                    assigned_to = st.text_input('Commercial assigné', value=current.get('assigned_to') or 'Louis')
+                    opportunity_type = st.selectbox('Type opportunité', TYPE_OPPS, index=safe_index(TYPE_OPPS, current.get('opportunity_type'), 0))
+                with c2:
+                    gamme = st.selectbox('Gamme', GAMMES, index=safe_index(GAMMES, current.get('gamme'), 0))
+                    ptac = st.text_input('PTAC', value=current.get('ptac') or '')
+                    bodywork = st.selectbox('Carrosserie', CARROSSERIES, index=safe_index(CARROSSERIES, current.get('bodywork'), 0))
+                    energy = st.selectbox('Énergie', ENERGIES, index=safe_index(ENERGIES, current.get('energy'), 0))
+                with c3:
+                    vn_parc = st.text_input('VN / Parc', value=current.get('vn_parc') or '')
+                    duration_months = st.number_input('Durée (mois)', min_value=0, step=1, value=coerce_int(current.get('duration_months'), 0))
+                    annual_km = st.number_input('Km/an', min_value=0, step=1000, value=coerce_int(current.get('annual_km'), 0))
+                    monthly_rent = st.number_input('Loyer mensuel €', min_value=0.0, step=10.0, value=coerce_float(current.get('monthly_rent'), 0.0))
+                s1, s2, s3 = st.columns(3)
+                with s1:
+                    status = st.selectbox('Statut', STATUSES, index=STATUSES.index(current.get('status')) if current.get('status') in STATUSES else 0)
+
+                    has_proposal_sent_on = st.checkbox('Renseigner la date d’envoi proposition', value=bool(current.get('proposal_sent_on')))
+                    proposal_sent_on = st.date_input('Date envoi proposition', value=coerce_date(current.get('proposal_sent_on')), disabled=not has_proposal_sent_on)
+                    if not has_proposal_sent_on:
+                        proposal_sent_on = None
+
+                    has_next_action_date = st.checkbox('Renseigner la prochaine action', value=bool(current.get('next_action_date')))
+                    next_action_date = st.date_input('Date prochaine action', value=coerce_date(current.get('next_action_date')), disabled=not has_next_action_date)
+                    if not has_next_action_date:
+                        next_action_date = None
+                with s2:
+                    next_action = st.selectbox('Action suivante', ACTIONS, index=ACTIONS.index(current.get('next_action')) if current.get('next_action') in ACTIONS else 0)
+                    blockage = st.selectbox('Blocage principal', BLOCKAGES, index=BLOCKAGES.index(current.get('blockage')) if current.get('blockage') in BLOCKAGES else 0)
+                    competitor = st.text_input('Concurrent', value=current.get('competitor') or '')
+                with s3:
+                    contract_ref = st.text_input('Contrat / BDC', value=current.get('contract_ref') or '')
+                    has_ao_deadline = st.checkbox('Renseigner la deadline AO', value=bool(current.get('ao_deadline')))
+                    ao_deadline = st.date_input('Deadline AO', value=coerce_date(current.get('ao_deadline')), disabled=not has_ao_deadline)
+                    if not has_ao_deadline:
+                        ao_deadline = None
+            with tab_notes:
+                comments = st.text_area('Notes sur l’affaire', value=current.get('comments') or '', height=220, placeholder='Compte-rendu, relances, contexte, infos terrain...')
             submitted = st.form_submit_button('Enregistrer l’affaire')
             if submitted:
                 client_id = clients[clients['name'] == client_name].iloc[0]['id'] if not clients.empty else None
@@ -850,6 +936,18 @@ def page_affairs():
                 })
                 st.success('Affaire enregistrée.')
                 st.rerun()
+
+        if current.get('id'):
+            st.markdown('---')
+            st.markdown('**Suppression de l’affaire**')
+            confirm_delete_affair = st.checkbox("Je confirme la suppression de cette affaire", key=f"confirm_delete_affair_{current.get('id')}")
+            if st.button('🗑️ Supprimer cette affaire', type='secondary', key=f"delete_affair_btn_{current.get('id')}"):
+                if not confirm_delete_affair:
+                    st.error("Coche la confirmation avant de supprimer.")
+                else:
+                    delete_affair(current.get('id'))
+                    st.success('Affaire supprimée.')
+                    st.rerun()
 
     st.subheader('Filtres')
     f1, f2, f3 = st.columns(3)
