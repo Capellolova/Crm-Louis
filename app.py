@@ -565,16 +565,15 @@ def page_dashboard():
     c4.metric("Retards", retards)
 
 
+
 def page_clients():
     st.title("Clients")
     onglet_creation, onglet_suivi = st.tabs(["Créer / modifier un client", "Suivi clients"])
+
     with onglet_creation:
         clients_df = fetch_clients()
         options = ["Nouveau client"] + [f"{row['nom']} (#{row['id']})" for _, row in clients_df.iterrows()]
         selected = st.selectbox("Choisir une fiche client", options, key="client_edit_select")
-        if st.session_state.get("client_edit_selected") != selected:
-            st.session_state["client_edit_selected"] = selected
-
         current = None
         current_id = None
         if selected != "Nouveau client":
@@ -607,12 +606,25 @@ def page_clients():
         if clients_df.empty:
             st.info("Aucun client pour le moment.")
             return
-        labels = [f"{row['nom']} (#{row['id']})" for _, row in clients_df.iterrows()]
-        choice = st.selectbox("Ouvrir une fiche client", labels, key="follow_client_select")
-        if st.session_state.get("follow_client_selected") != choice:
-            st.session_state["follow_client_selected"] = choice
-        client_id = int(choice.split("#")[-1].replace(")", ""))
+
+        filtre = st.text_input("Filtrer les clients", key="client_follow_filter")
+        temp = clients_df.copy()
+        if filtre.strip():
+            temp = temp[temp["nom"].fillna("").str.contains(filtre, case=False)]
+
+        st.markdown("### Liste des fiches clients")
+        if temp.empty:
+            st.info("Aucun client trouvé.")
+            return
+
+        labels = [f"{row['nom']} (#{row['id']})" for _, row in temp.iterrows()]
+        selected = st.radio("Choisir un client", labels, key="follow_client_radio", label_visibility="collapsed")
+        client_id = int(selected.split("#")[-1].replace(")", ""))
         current = clients_df[clients_df["id"] == client_id].iloc[0].to_dict()
+
+        st.markdown("---")
+        st.markdown(f"### Fiche client — {current['nom']}")
+        st.caption(f"SIRET : {current.get('siret','') or '—'} | NAF : {current.get('naf','') or '—'}")
 
         with st.form(f"form_client_follow_{client_id}"):
             data = client_form(current, key_prefix=f"client_follow_form_{client_id}")
@@ -641,17 +653,14 @@ def page_affaires():
 
     with onglet_creation:
         affaires_df = fetch_affaires()
-        affaires_actives_df = affaires_df[affaires_df["statut"] != "Perdu"].copy()
-        options = ["Nouvelle affaire"] + [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_actives_df.iterrows()]
+        options = ["Nouvelle affaire"] + [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_df.iterrows()]
         selected = st.selectbox("Choisir un dossier affaire", options, key="affaire_edit_select")
-        if st.session_state.get("affaire_edit_selected") != selected:
-            st.session_state["affaire_edit_selected"] = selected
 
         current = None
         current_id = None
         if selected != "Nouvelle affaire":
             current_id = int(selected.split(" - ")[0].replace("#", ""))
-            current = affaires_actives_df[affaires_actives_df["id"] == current_id].iloc[0].to_dict()
+            current = affaires_df[affaires_df["id"] == current_id].iloc[0].to_dict()
 
         with st.form(f"form_affaire_create_edit_{current_id or 'new'}"):
             data = affaire_form(clients_df, current, key_prefix=f"affaire_form_{current_id or 'new'}")
@@ -684,124 +693,81 @@ def page_affaires():
         affaires_terminees_df = affaires_df[affaires_df["statut"] == "Livré / Terminé"].copy()
         affaires_perdues_df = affaires_df[affaires_df["statut"] == "Perdu"].copy()
 
-        label_list = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_ouvertes_df.iterrows()]
-        default_index = 0
-        if "last_affaire_id" in st.session_state:
-            last_id = st.session_state["last_affaire_id"]
-            for i, (_, row) in enumerate(affaires_ouvertes_df.iterrows()):
-                if int(row["id"]) == int(last_id):
-                    default_index = i
-                    break
+        filtre = st.text_input("Filtrer les dossiers (client / statut)", key="affaire_follow_filter")
 
-        selected = st.selectbox("Ouvrir un dossier affaire", label_list, index=default_index, key="follow_affaire_select")
-        if st.session_state.get("follow_affaire_selected") != selected:
-            st.session_state["follow_affaire_selected"] = selected
+        sous1, sous2, sous3, sous4 = st.tabs([
+            f"Affaires en cours ({len(affaires_ouvertes_df)})",
+            f"Affaires gagnées - suivi livraison / administratif ({len(affaires_gagnees_df)})",
+            f"Affaires gagnées - dossiers terminés ({len(affaires_terminees_df)})",
+            f"Affaires perdues archivées ({len(affaires_perdues_df)})"
+        ])
 
-        affaire_id = int(selected.split(" - ")[0].replace("#", ""))
-        current = affaires_ouvertes_df[affaires_ouvertes_df["id"] == affaire_id].iloc[0].to_dict()
+        def apply_filter(df):
+            temp = df.copy()
+            if filtre.strip():
+                mask = temp["client_nom"].fillna("").str.contains(filtre, case=False) | temp["statut"].fillna("").str.contains(filtre, case=False)
+                temp = temp[mask]
+            return temp
 
-        st.markdown(f"""
-        <div class="card">
-            <b>{current.get('client_nom') or 'Sans client'}</b><br>
-            {current.get('gamme','')} - {current.get('carrosserie','')} - {current.get('energie','')}<br>
-            Statut : {current.get('statut','')}<br>
-            Priorité : {current.get('priorite','')}
-        </div>
-        """, unsafe_allow_html=True)
+        def render_affaire_section(df, section_key, editable=True, show_documents=True):
+            df = apply_filter(df)
+            if df.empty:
+                st.info("Aucun dossier ici.")
+                return
 
-        with st.form(f"form_affaire_follow_{affaire_id}"):
-            data = affaire_form(clients_df, current, key_prefix=f"affaire_follow_form_{affaire_id}")
-            save_follow_affaire = st.form_submit_button("💾 Enregistrer depuis le suivi", use_container_width=True)
+            labels = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in df.iterrows()]
+            selected = st.radio("Choisir un dossier", labels, key=f"{section_key}_radio", label_visibility="collapsed")
+            affaire_id = int(selected.split(" - ")[0].replace("#", ""))
+            current = df[df["id"] == affaire_id].iloc[0].to_dict()
 
-        if save_follow_affaire:
-            upsert_affaire(affaire_id, data)
-            st.success("Affaire mise à jour.")
-            st.rerun()
-
-        section_documents(affaire_id, key_prefix=f"follow_docs_{affaire_id}")
-
-        confirm = st.checkbox("Confirmer la suppression du dossier", key=f"confirm_delete_affaire_follow_{affaire_id}")
-        if st.button("🗑️ Supprimer ce dossier", use_container_width=True, key=f"delete_follow_affaire_btn_{affaire_id}", disabled=not confirm):
-            delete_affaire(affaire_id)
-            st.success("Affaire supprimée.")
-            st.rerun()
-
-        st.markdown("### Liste rapide")
-        filtre = st.text_input("Filtrer les affaires (client / statut)", key="affaire_filter")
-        temp = affaires_ouvertes_df.copy()
-        if filtre.strip():
-            mask = temp["client_nom"].fillna("").str.contains(filtre, case=False) | temp["statut"].fillna("").str.contains(filtre, case=False)
-            temp = temp[mask]
-        for _, row in temp.head(20).iterrows():
-            total_est = safe_int(row.get("duree_mois"), 0) * safe_float(row.get("loyer_mensuel"), 0.0)
+            st.markdown("---")
+            st.markdown(f"### Dossier #{affaire_id} — {current.get('client_nom') or 'Sans client'}")
             st.markdown(f"""
             <div class="card">
-                <b>#{row['id']} - {row.get('client_nom') or 'Sans client'}</b><br>
-                {row.get('gamme','')} - {row.get('carrosserie','')} - {row.get('energie','')}<br>
-                Statut : {row.get('statut','')} | Priorité : {row.get('priorite','')}<br>
-                Total estimé : {total_est:,.0f} € | Action : {row.get('action_suivante','')} | Prochaine action : {display_date(row.get('date_prochaine_action'))}
+                <b>{current.get('client_nom') or 'Sans client'}</b><br>
+                {current.get('gamme','')} - {current.get('carrosserie','')} - {current.get('energie','')}<br>
+                Statut : {current.get('statut','')} | Priorité : {current.get('priorite','')}<br>
+                Action : {current.get('action_suivante','')} | Prochaine action : {display_date(current.get('date_prochaine_action'))}
             </div>
-            """.replace(",", " "), unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
 
-        with st.expander(f"Affaires gagnées - suivi livraison / administratif ({len(affaires_gagnees_df)})"):
-            if affaires_gagnees_df.empty:
-                st.info("Aucune affaire gagnée en suivi.")
-            else:
-                labels_gagnees = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('action_suivante') or row.get('statut')}" for _, row in affaires_gagnees_df.iterrows()]
-                selected_gagnee = st.selectbox("Ouvrir un dossier gagné en suivi", labels_gagnees, key="follow_affaire_gagnee_select")
-                affaire_gagnee_id = int(selected_gagnee.split(" - ")[0].replace("#", ""))
-                current_gagnee = affaires_gagnees_df[affaires_gagnees_df["id"] == affaire_gagnee_id].iloc[0].to_dict()
+            if editable:
+                with st.form(f"form_{section_key}_{affaire_id}"):
+                    data = affaire_form(clients_df, current, key_prefix=f"{section_key}_form_{affaire_id}")
+                    save_btn = st.form_submit_button("💾 Enregistrer les modifications", use_container_width=True)
 
-                st.markdown(f"""
-                <div class="card">
-                    <b>{current_gagnee.get('client_nom') or 'Sans client'}</b><br>
-                    {current_gagnee.get('gamme','')} - {current_gagnee.get('carrosserie','')} - {current_gagnee.get('energie','')}<br>
-                    Statut : {current_gagnee.get('statut','')} | Action : {current_gagnee.get('action_suivante','')}<br>
-                    Prochaine action : {display_date(current_gagnee.get('date_prochaine_action'))}
-                </div>
-                """, unsafe_allow_html=True)
-
-                with st.form(f"form_affaire_gagnee_follow_{affaire_gagnee_id}"):
-                    data_gagnee = affaire_form(clients_df, current_gagnee, key_prefix=f"affaire_gagnee_follow_form_{affaire_gagnee_id}")
-                    save_gagnee = st.form_submit_button("💾 Enregistrer le suivi gagné", use_container_width=True)
-
-                if save_gagnee:
-                    upsert_affaire(affaire_gagnee_id, data_gagnee)
-                    st.success("Affaire gagnée mise à jour.")
+                if save_btn:
+                    upsert_affaire(affaire_id, data)
+                    st.success("Affaire mise à jour.")
                     st.rerun()
 
-                section_documents(affaire_gagnee_id, key_prefix=f"won_docs_{affaire_gagnee_id}")
+                if show_documents:
+                    section_documents(affaire_id, key_prefix=f"{section_key}_docs_{affaire_id}")
 
-        with st.expander(f"Affaires gagnées - dossiers terminés ({len(affaires_terminees_df)})"):
-            if affaires_terminees_df.empty:
-                st.info("Aucun dossier terminé.")
+                confirm = st.checkbox("Confirmer la suppression du dossier", key=f"{section_key}_delete_confirm_{affaire_id}")
+                if st.button("🗑️ Supprimer ce dossier", use_container_width=True, key=f"{section_key}_delete_btn_{affaire_id}", disabled=not confirm):
+                    delete_affaire(affaire_id)
+                    st.success("Affaire supprimée.")
+                    st.rerun()
             else:
-                for _, row in affaires_terminees_df.iterrows():
-                    total_est = safe_int(row.get("duree_mois"), 0) * safe_float(row.get("loyer_mensuel"), 0.0)
-                    st.markdown(f"""
-                    <div class="card">
-                        <b>#{row['id']} - {row.get('client_nom') or 'Sans client'}</b><br>
-                        {row.get('gamme','')} - {row.get('carrosserie','')} - {row.get('energie','')}<br>
-                        Statut : {row.get('statut','')} | Priorité : {row.get('priorite','')}<br>
-                        Total estimé : {total_est:,.0f} € | Action : {row.get('action_suivante','')} | Prochaine action : {display_date(row.get('date_prochaine_action'))}
-                    </div>
-                    """.replace(",", " "), unsafe_allow_html=True)
+                total_est = safe_int(current.get("duree_mois"), 0) * safe_float(current.get("loyer_mensuel"), 0.0)
+                st.markdown(f"""
+                <div class="card">
+                    Total estimé : {total_est:,.0f} €<br>
+                    Concurrent : {current.get('concurrent','') or '—'}<br>
+                    Contrat / BDC : {current.get('contrat_bdc','') or '—'}<br>
+                    Notes : {current.get('notes','') or '—'}
+                </div>
+                """.replace(",", " "), unsafe_allow_html=True)
 
-        with st.expander(f"Affaires perdues archivées ({len(affaires_perdues_df)})"):
-            if affaires_perdues_df.empty:
-                st.info("Aucune affaire perdue.")
-            else:
-                for _, row in affaires_perdues_df.iterrows():
-                    total_est = safe_int(row.get("duree_mois"), 0) * safe_float(row.get("loyer_mensuel"), 0.0)
-                    st.markdown(f"""
-                    <div class="card">
-                        <b>#{row['id']} - {row.get('client_nom') or 'Sans client'}</b><br>
-                        {row.get('gamme','')} - {row.get('carrosserie','')} - {row.get('energie','')}<br>
-                        Statut : {row.get('statut','')} | Priorité : {row.get('priorite','')}<br>
-                        Total estimé : {total_est:,.0f} € | Action : {row.get('action_suivante','')} | Prochaine action : {display_date(row.get('date_prochaine_action'))}
-                    </div>
-                    """.replace(",", " "), unsafe_allow_html=True)
-
+        with sous1:
+            render_affaire_section(affaires_ouvertes_df, "encours", editable=True, show_documents=True)
+        with sous2:
+            render_affaire_section(affaires_gagnees_df, "gagnees", editable=True, show_documents=True)
+        with sous3:
+            render_affaire_section(affaires_terminees_df, "terminees", editable=True, show_documents=True)
+        with sous4:
+            render_affaire_section(affaires_perdues_df, "perdues", editable=False, show_documents=False)
 
 def page_stats():
     st.title("Statistiques & pilotage")
