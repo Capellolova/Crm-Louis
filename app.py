@@ -542,7 +542,7 @@ def page_dashboard():
 
     signed = affairs[affairs['status'] == 'Gagné']['total_estimated'].fillna(0).sum() if not affairs.empty else 0
     pipeline = affairs[~affairs['status'].isin(['Gagné', 'Perdu'])]['total_estimated'].fillna(0).sum() if not affairs.empty else 0
-    hot = int((affairs['priority'] == '🔥 Chaud').sum()) if not affairs.empty else 0
+    hot = int(((affairs['priority'] == '🔥 Chaud') & (~affairs['status'].isin(['Gagné', 'Perdu']))).sum()) if not affairs.empty else 0
     today_actions = int((affairs['next_action_date'] == date.today()).sum()) if not affairs.empty else 0
     overdue = int((affairs['retard_action'] == True).sum()) if not affairs.empty else 0
 
@@ -857,7 +857,7 @@ def page_today():
         return
     today_df = affairs[(affairs['next_action_date'] == date.today()) | (affairs['retard_action'] == True)].copy()
     ao_df = affairs[(pd.to_datetime(affairs['ao_deadline'], errors='coerce').dt.date >= date.today()) & (pd.to_datetime(affairs['ao_deadline'], errors='coerce').dt.date <= date.today() + timedelta(days=3))].copy()
-    hot_df = affairs[(affairs['priority'] == '🔥 Chaud') & (affairs['days_without_activity'].fillna(0) >= 2)].copy()
+    hot_df = affairs[(affairs['priority'] == '🔥 Chaud') & (~affairs['status'].isin(['Gagné', 'Perdu'])) & (affairs['days_without_activity'].fillna(0) >= 2)].copy()
 
     st.subheader("À faire aujourd'hui / en retard")
     st.dataframe(today_df[['client_name', 'status', 'next_action', 'next_action_date', 'priority']], use_container_width=True, hide_index=True)
