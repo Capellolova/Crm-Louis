@@ -15,12 +15,12 @@ ENERGIES = ["B7", "B100", "B100 FLEXIBLE", "E-TECH"]
 PRIORITES = ["🔥 Chaud", "⚠️ À suivre", "🧊 Froid"]
 TYPES_OPP = ["Prospect", "Client existant", "Renouvellement", "AO / SAD"]
 STATUTS = [
-    "Définition du besoin", "Chiffrage en cours", "Faire proposition",
+    "Définition du besoin", "Chiffrage en cours", "Rendez-vous", "Faire proposition",
     "Proposition envoyée", "Relance", "Contre-proposition",
     "Accord client", "Commande en cours", "Gagné", "Perdu", "Stand-by"
 ]
 ACTIONS = [
-    "Appeler", "Relancer mail", "Envoyer proposition", "Refaire chiffrage",
+    "Appeler", "Rendez-vous", "Relancer mail", "Envoyer proposition", "Refaire chiffrage",
     "Prendre RDV", "Attendre retour client", "Attendre validation interne",
     "Commander véhicule", "Clôturer gagné", "Clôturer perdu"
 ]
