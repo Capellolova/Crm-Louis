@@ -22,7 +22,8 @@ STATUTS = [
 ACTIONS = [
     "Appeler", "Rendez-vous", "Relancer mail", "Envoyer proposition", "Refaire chiffrage",
     "Prendre RDV", "Attendre retour client", "Attendre validation interne",
-    "Commander véhicule", "Clôturer gagné", "Clôturer perdu"
+    "Commander véhicule", "Signature contrat", "Récupération dépôt de garantie + SEPA",
+    "Livraison", "Clôturer gagné", "Clôturer perdu"
 ]
 BLOCAGES = [
     "Prix", "Délais", "Pas de besoin immédiat", "Décision interne client",
@@ -678,14 +679,15 @@ def page_affaires():
             st.info("Aucune affaire pour le moment.")
             return
 
-        affaires_actives_df = affaires_df[affaires_df["statut"] != "Perdu"].copy()
+        affaires_ouvertes_df = affaires_df[~affaires_df["statut"].isin(["Perdu", "Gagné"])].copy()
+        affaires_gagnees_df = affaires_df[affaires_df["statut"] == "Gagné"].copy()
         affaires_perdues_df = affaires_df[affaires_df["statut"] == "Perdu"].copy()
 
-        label_list = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_actives_df.iterrows()]
+        label_list = [f"#{row['id']} - {(row.get('client_nom') or 'Sans client')} - {row.get('statut')}" for _, row in affaires_ouvertes_df.iterrows()]
         default_index = 0
         if "last_affaire_id" in st.session_state:
             last_id = st.session_state["last_affaire_id"]
-            for i, (_, row) in enumerate(affaires_actives_df.iterrows()):
+            for i, (_, row) in enumerate(affaires_ouvertes_df.iterrows()):
                 if int(row["id"]) == int(last_id):
                     default_index = i
                     break
@@ -695,7 +697,7 @@ def page_affaires():
             st.session_state["follow_affaire_selected"] = selected
 
         affaire_id = int(selected.split(" - ")[0].replace("#", ""))
-        current = affaires_actives_df[affaires_actives_df["id"] == affaire_id].iloc[0].to_dict()
+        current = affaires_ouvertes_df[affaires_ouvertes_df["id"] == affaire_id].iloc[0].to_dict()
 
         st.markdown(f"""
         <div class="card">
@@ -725,7 +727,7 @@ def page_affaires():
 
         st.markdown("### Liste rapide")
         filtre = st.text_input("Filtrer les affaires (client / statut)", key="affaire_filter")
-        temp = affaires_actives_df.copy()
+        temp = affaires_ouvertes_df.copy()
         if filtre.strip():
             mask = temp["client_nom"].fillna("").str.contains(filtre, case=False) | temp["statut"].fillna("").str.contains(filtre, case=False)
             temp = temp[mask]
@@ -739,6 +741,21 @@ def page_affaires():
                 Total estimé : {total_est:,.0f} € | Action : {row.get('action_suivante','')} | Prochaine action : {display_date(row.get('date_prochaine_action'))}
             </div>
             """.replace(",", " "), unsafe_allow_html=True)
+
+        with st.expander(f"Affaires gagnées en attente de livraison / suivi ({len(affaires_gagnees_df)})"):
+            if affaires_gagnees_df.empty:
+                st.info("Aucune affaire gagnée.")
+            else:
+                for _, row in affaires_gagnees_df.iterrows():
+                    total_est = safe_int(row.get("duree_mois"), 0) * safe_float(row.get("loyer_mensuel"), 0.0)
+                    st.markdown(f"""
+                    <div class="card">
+                        <b>#{row['id']} - {row.get('client_nom') or 'Sans client'}</b><br>
+                        {row.get('gamme','')} - {row.get('carrosserie','')} - {row.get('energie','')}<br>
+                        Statut : {row.get('statut','')} | Priorité : {row.get('priorite','')}<br>
+                        Total estimé : {total_est:,.0f} € | Action : {row.get('action_suivante','')} | Prochaine action : {display_date(row.get('date_prochaine_action'))}
+                    </div>
+                    """.replace(",", " "), unsafe_allow_html=True)
 
         with st.expander(f"Affaires perdues archivées ({len(affaires_perdues_df)})"):
             if affaires_perdues_df.empty:
