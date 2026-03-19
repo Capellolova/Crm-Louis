@@ -794,6 +794,12 @@ def page_affaires():
                         </div>
                         """, unsafe_allow_html=True)
 
+                        col_close_lost, col_close_lost_spacer = st.columns([1, 5])
+                        with col_close_lost:
+                            if st.button("❌ Fermer la fiche", key=f"{section_key}_close_archived_{affaire_id}", use_container_width=True):
+                                st.session_state[selected_key] = None
+                                st.rerun()
+
                 st.markdown("---")
         with sous1:
             render_affaire_section(affaires_ouvertes_df, "encours", editable=True, show_documents=True)
