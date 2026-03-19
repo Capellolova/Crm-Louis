@@ -732,7 +732,7 @@ def page_affaires():
                 <b>#{row['id']} - {row.get('client_nom') or 'Sans client'}</b><br>
                 {row.get('gamme','')} - {row.get('carrosserie','')} - {row.get('energie','')}<br>
                 Statut : {row.get('statut','')} | Priorité : {row.get('priorite','')}<br>
-                Total estimé : {total_est:,.0f} € | Prochaine action : {display_date(row.get('date_prochaine_action'))}
+                Total estimé : {total_est:,.0f} € | Action : {row.get('action_suivante','')} | Prochaine action : {display_date(row.get('date_prochaine_action'))}
             </div>
             """.replace(",", " "), unsafe_allow_html=True)
 
