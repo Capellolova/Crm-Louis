@@ -711,6 +711,7 @@ def page_affaires():
 
 
 
+
         def render_affaire_section(df, section_key, editable=True, show_documents=True):
             df = apply_filter(df)
             if df.empty:
@@ -740,61 +741,54 @@ def page_affaires():
                 </div>
                 """.replace(",", " "), unsafe_allow_html=True)
 
-                if st.button("Ouvrir la fiche", key=f"{section_key}_open_{affaire_id}", use_container_width=True):
-                    st.session_state[selected_key] = affaire_id
-                    st.rerun()
+                col_open, col_spacer = st.columns([1, 5])
+                with col_open:
+                    if st.button("Ouvrir la fiche", key=f"{section_key}_open_{affaire_id}", use_container_width=True):
+                        current_selected = st.session_state.get(selected_key)
+                        st.session_state[selected_key] = None if current_selected == affaire_id else affaire_id
+                        st.rerun()
 
-            selected_affaire_id = st.session_state.get(selected_key)
-            if selected_affaire_id is None and not temp.empty:
-                selected_affaire_id = int(temp.iloc[0]["id"])
+                if st.session_state.get(selected_key) == affaire_id:
+                    current = row.to_dict()
 
-            if selected_affaire_id is None:
-                return
+                    st.markdown(f"#### Fiche dossier #{affaire_id} — {current.get('client_nom') or 'Sans client'}")
+                    st.markdown(f"""
+                    <div class="card">
+                        <b>{current.get('client_nom') or 'Sans client'}</b><br>
+                        {current.get('gamme','')} - {current.get('carrosserie','')} - {current.get('energie','')}<br>
+                        Statut : {current.get('statut','')} | Priorité : {current.get('priorite','')}<br>
+                        Action : {current.get('action_suivante','')} | Prochaine action : {display_date(current.get('date_prochaine_action')) or '—'}
+                    </div>
+                    """, unsafe_allow_html=True)
 
-            current_rows = temp[temp["id"] == selected_affaire_id]
-            if current_rows.empty:
-                return
+                    if editable:
+                        with st.form(f"form_{section_key}_{affaire_id}"):
+                            data = affaire_form(clients_df, current, key_prefix=f"{section_key}_form_{affaire_id}")
+                            save_btn = st.form_submit_button("💾 Enregistrer les modifications", use_container_width=True)
 
-            current = current_rows.iloc[0].to_dict()
-            affaire_id = int(current["id"])
+                        if save_btn:
+                            upsert_affaire(affaire_id, data)
+                            st.success("Affaire mise à jour.")
+                            st.rerun()
 
-            st.markdown("---")
-            st.markdown(f"## Fiche dossier #{affaire_id} — {current.get('client_nom') or 'Sans client'}")
-            st.markdown(f"""
-            <div class="card">
-                <b>{current.get('client_nom') or 'Sans client'}</b><br>
-                {current.get('gamme','')} - {current.get('carrosserie','')} - {current.get('energie','')}<br>
-                Statut : {current.get('statut','')} | Priorité : {current.get('priorite','')}<br>
-                Action : {current.get('action_suivante','')} | Prochaine action : {display_date(current.get('date_prochaine_action')) or '—'}
-            </div>
-            """, unsafe_allow_html=True)
+                        if show_documents:
+                            section_documents(affaire_id, key_prefix=f"{section_key}_docs_{affaire_id}")
 
-            if editable:
-                with st.form(f"form_{section_key}_{affaire_id}"):
-                    data = affaire_form(clients_df, current, key_prefix=f"{section_key}_form_{affaire_id}")
-                    save_btn = st.form_submit_button("💾 Enregistrer les modifications", use_container_width=True)
+                        confirm = st.checkbox("Confirmer la suppression du dossier", key=f"{section_key}_delete_confirm_{affaire_id}")
+                        if st.button("🗑️ Supprimer ce dossier", use_container_width=True, key=f"{section_key}_delete_btn_{affaire_id}", disabled=not confirm):
+                            delete_affaire(affaire_id)
+                            st.success("Affaire supprimée.")
+                            st.rerun()
+                    else:
+                        st.markdown(f"""
+                        <div class="card">
+                            Concurrent : {current.get('concurrent','') or '—'}<br>
+                            Contrat / BDC : {current.get('contrat_bdc','') or '—'}<br>
+                            Notes : {current.get('notes','') or '—'}
+                        </div>
+                        """, unsafe_allow_html=True)
 
-                if save_btn:
-                    upsert_affaire(affaire_id, data)
-                    st.success("Affaire mise à jour.")
-                    st.rerun()
-
-                if show_documents:
-                    section_documents(affaire_id, key_prefix=f"{section_key}_docs_{affaire_id}")
-
-                confirm = st.checkbox("Confirmer la suppression du dossier", key=f"{section_key}_delete_confirm_{affaire_id}")
-                if st.button("🗑️ Supprimer ce dossier", use_container_width=True, key=f"{section_key}_delete_btn_{affaire_id}", disabled=not confirm):
-                    delete_affaire(affaire_id)
-                    st.success("Affaire supprimée.")
-                    st.rerun()
-            else:
-                st.markdown(f"""
-                <div class="card">
-                    Concurrent : {current.get('concurrent','') or '—'}<br>
-                    Contrat / BDC : {current.get('contrat_bdc','') or '—'}<br>
-                    Notes : {current.get('notes','') or '—'}
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown("---")
         with sous1:
             render_affaire_section(affaires_ouvertes_df, "encours", editable=True, show_documents=True)
         with sous2:
