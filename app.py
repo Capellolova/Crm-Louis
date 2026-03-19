@@ -314,16 +314,35 @@ def coerce_float(v, default=0.0):
 def coerce_date(v, default=None):
     if default is None:
         default = date.today()
+    if v is None:
+        return default
+    try:
+        if pd.isna(v):
+            return default
+    except Exception:
+        pass
     if isinstance(v, datetime):
         return v.date()
     if isinstance(v, date):
         return v
-    if v in (None, '', 'None'):
+    if v in ('', 'None', 'NaT', 'nat'):
         return default
     try:
-        return pd.to_datetime(v).date()
+        dt = pd.to_datetime(v, errors='coerce')
+        if pd.isna(dt):
+            return default
+        return dt.date()
     except Exception:
         return default
+
+
+def has_real_date(v):
+    if v is None:
+        return False
+    try:
+        return not pd.isna(v) and str(v).strip() not in ('', 'None', 'NaT', 'nat')
+    except Exception:
+        return str(v).strip() not in ('', 'None', 'NaT', 'nat')
 
 
 def normalize_status(status):
@@ -900,12 +919,12 @@ def page_affairs():
                 with s1:
                     status = st.selectbox('Statut', STATUSES, index=STATUSES.index(current.get('status')) if current.get('status') in STATUSES else 0)
 
-                    has_proposal_sent_on = st.checkbox('Renseigner la date d’envoi proposition', value=bool(current.get('proposal_sent_on')))
+                    has_proposal_sent_on = st.checkbox('Renseigner la date d’envoi proposition', value=has_real_date(current.get('proposal_sent_on')))
                     proposal_sent_on = st.date_input('Date envoi proposition', value=coerce_date(current.get('proposal_sent_on')), disabled=not has_proposal_sent_on)
                     if not has_proposal_sent_on:
                         proposal_sent_on = None
 
-                    has_next_action_date = st.checkbox('Renseigner la prochaine action', value=bool(current.get('next_action_date')))
+                    has_next_action_date = st.checkbox('Renseigner la prochaine action', value=has_real_date(current.get('next_action_date')))
                     next_action_date = st.date_input('Date prochaine action', value=coerce_date(current.get('next_action_date')), disabled=not has_next_action_date)
                     if not has_next_action_date:
                         next_action_date = None
@@ -915,7 +934,7 @@ def page_affairs():
                     competitor = st.text_input('Concurrent', value=current.get('competitor') or '')
                 with s3:
                     contract_ref = st.text_input('Contrat / BDC', value=current.get('contract_ref') or '')
-                    has_ao_deadline = st.checkbox('Renseigner la deadline AO', value=bool(current.get('ao_deadline')))
+                    has_ao_deadline = st.checkbox('Renseigner la deadline AO', value=has_real_date(current.get('ao_deadline')))
                     ao_deadline = st.date_input('Deadline AO', value=coerce_date(current.get('ao_deadline')), disabled=not has_ao_deadline)
                     if not has_ao_deadline:
                         ao_deadline = None
