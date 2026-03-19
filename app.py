@@ -712,13 +712,13 @@ def page_affaires():
 
 
 
-
         def render_affaire_section(df, section_key, editable=True, show_documents=True):
             df = apply_filter(df)
             if df.empty:
                 st.info("Aucun dossier ici.")
                 return
 
+            # Classement par date de prochaine action :
             temp = df.copy()
             temp["_date_tri"] = pd.to_datetime(temp["date_prochaine_action"], errors="coerce")
             temp["_date_vide"] = temp["_date_tri"].isna()
@@ -741,10 +741,12 @@ def page_affaires():
                 </div>
                 """.replace(",", " "), unsafe_allow_html=True)
 
-                if st.button("Ouvrir la fiche", key=f"{section_key}_open_{affaire_id}", use_container_width=True):
-                    current_selected = st.session_state.get(selected_key)
-                    st.session_state[selected_key] = None if current_selected == affaire_id else affaire_id
-                    st.rerun()
+                col_open, col_spacer = st.columns([1, 5])
+                with col_open:
+                    if st.button("Ouvrir la fiche", key=f"{section_key}_open_{affaire_id}", use_container_width=True):
+                        current_selected = st.session_state.get(selected_key)
+                        st.session_state[selected_key] = None if current_selected == affaire_id else affaire_id
+                        st.rerun()
 
                 if st.session_state.get(selected_key) == affaire_id:
                     current = row.to_dict()
@@ -758,6 +760,12 @@ def page_affaires():
                         Action : {current.get('action_suivante','')} | Prochaine action : {display_date(current.get('date_prochaine_action')) or '—'}
                     </div>
                     """, unsafe_allow_html=True)
+
+                    col_close, col_close_spacer = st.columns([1, 5])
+                    with col_close:
+                        if st.button("❌ Fermer la fiche", key=f"{section_key}_close_{affaire_id}", use_container_width=True):
+                            st.session_state[selected_key] = None
+                            st.rerun()
 
                     if editable:
                         with st.form(f"form_{section_key}_{affaire_id}"):
@@ -786,9 +794,11 @@ def page_affaires():
                         </div>
                         """, unsafe_allow_html=True)
 
-                    if st.button("❌ Fermer la fiche", key=f"{section_key}_close_{affaire_id}", use_container_width=True):
-                        st.session_state[selected_key] = None
-                        st.rerun()
+                        col_close_lost, col_close_lost_spacer = st.columns([1, 5])
+                        with col_close_lost:
+                            if st.button("❌ Fermer la fiche", key=f"{section_key}_close_archived_{affaire_id}", use_container_width=True):
+                                st.session_state[selected_key] = None
+                                st.rerun()
 
                 st.markdown("---")
         with sous1:
