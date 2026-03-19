@@ -1,4 +1,5 @@
 
+import os
 import sqlite3
 from datetime import datetime
 import streamlit as st
@@ -6,6 +7,7 @@ import pandas as pd
 
 APP_TITLE = "CRM Louis"
 DB_PATH = "crm_louis.db"
+DOCS_DIR = "documents_affaires"
 
 GAMMES = ["GL", "VU", "REM"]
 CARROSSERIES = ["FRIGO", "HYDRAU", "SEC", "TRR", "AUTRE"]
@@ -53,6 +55,7 @@ def get_conn():
 
 
 def init_db():
+    os.makedirs(DOCS_DIR, exist_ok=True)
     conn = get_conn()
     cur = conn.cursor()
     cur.execute("""
@@ -111,6 +114,17 @@ def init_db():
         created_at TEXT,
         updated_at TEXT,
         FOREIGN KEY (client_id) REFERENCES clients(id)
+    )
+    """)
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS documents_affaires (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        affaire_id INTEGER NOT NULL,
+        nom_document TEXT NOT NULL,
+        type_document TEXT,
+        chemin_fichier TEXT NOT NULL,
+        created_at TEXT,
+        FOREIGN KEY (affaire_id) REFERENCES affaires(id)
     )
     """)
     conn.commit()
@@ -190,6 +204,14 @@ def fetch_affaires():
     """)
 
 
+def fetch_documents_affaire(affaire_id):
+    return fetch_df("""
+        SELECT * FROM documents_affaires
+        WHERE affaire_id = ?
+        ORDER BY id DESC
+    """, (affaire_id,))
+
+
 def upsert_client(client_id, data):
     ts = now_iso()
     if client_id is None:
@@ -262,14 +284,53 @@ def upsert_affaire(affaire_id, data):
 
 def delete_client(client_id, delete_related=False):
     if delete_related:
-        execute("DELETE FROM affaires WHERE client_id=?", (client_id,))
+        affaires = fetch_df("SELECT id FROM affaires WHERE client_id=?", (client_id,))
+        for _, row in affaires.iterrows():
+            delete_affaire(int(row["id"]))
     else:
         execute("UPDATE affaires SET client_id=NULL WHERE client_id=?", (client_id,))
     execute("DELETE FROM clients WHERE id=?", (client_id,))
 
 
 def delete_affaire(affaire_id):
+    docs = fetch_documents_affaire(affaire_id)
+    for _, row in docs.iterrows():
+        path = row.get("chemin_fichier")
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+    execute("DELETE FROM documents_affaires WHERE affaire_id=?", (affaire_id,))
     execute("DELETE FROM affaires WHERE id=?", (affaire_id,))
+
+
+def save_uploaded_document(affaire_id, uploaded_file, type_document):
+    affaire_dir = os.path.join(DOCS_DIR, f"affaire_{affaire_id}")
+    os.makedirs(affaire_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    original_name = uploaded_file.name
+    safe_name = original_name.replace("/", "_").replace("\\", "_")
+    filepath = os.path.join(affaire_dir, f"{timestamp}_{safe_name}")
+    with open(filepath, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    execute("""
+        INSERT INTO documents_affaires (affaire_id, nom_document, type_document, chemin_fichier, created_at)
+        VALUES (?,?,?,?,?)
+    """, (affaire_id, original_name, type_document, filepath, now_iso()))
+
+
+def delete_document(doc_id):
+    row = fetch_df("SELECT * FROM documents_affaires WHERE id=?", (doc_id,))
+    if row.empty:
+        return
+    path = row.iloc[0]["chemin_fichier"]
+    if path and os.path.exists(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+    execute("DELETE FROM documents_affaires WHERE id=?", (doc_id,))
 
 
 def idx(options, value, default=0):
@@ -334,38 +395,41 @@ def affaire_form(clients_df, default=None, key_prefix="affaire"):
                 default_client_index = pos
                 break
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        client_choice = st.selectbox("Client lié", client_labels, index=default_client_index, key=f"{key_prefix}_client")
-        priorite = st.selectbox("Priorité", PRIORITES, index=idx(PRIORITES, default.get("priorite", PRIORITES[1]), 1), key=f"{key_prefix}_priorite")
-        date_creation = st.text_input("Date de création (vide = aujourd'hui)", value=display_date(default.get("date_creation")) or datetime.now().strftime("%d/%m/%Y"), key=f"{key_prefix}_date_creation")
-        commercial_assigne = st.text_input("Commercial assigné", value=default.get("commercial_assigne", "Louis"), key=f"{key_prefix}_commercial")
-        type_opportunite = st.selectbox("Type opportunité", TYPES_OPP, index=idx(TYPES_OPP, default.get("type_opportunite", TYPES_OPP[0])), key=f"{key_prefix}_type")
-        statut = st.selectbox("Statut", STATUTS, index=idx(STATUTS, default.get("statut", STATUTS[0])), key=f"{key_prefix}_statut")
-    with col2:
-        gamme = st.selectbox("Gamme", GAMMES, index=idx(GAMMES, default.get("gamme", GAMMES[0])), key=f"{key_prefix}_gamme")
-        carrosserie = st.selectbox("Carrosserie", CARROSSERIES, index=idx(CARROSSERIES, default.get("carrosserie", CARROSSERIES[0])), key=f"{key_prefix}_carrosserie")
-        energie = st.selectbox("Énergie", ENERGIES, index=idx(ENERGIES, default.get("energie", ENERGIES[0])), key=f"{key_prefix}_energie")
-        action_suivante = st.selectbox("Action suivante", ACTIONS, index=idx(ACTIONS, default.get("action_suivante", ACTIONS[0])), key=f"{key_prefix}_action")
-        blocage_principal = st.selectbox("Blocage principal", BLOCAGES, index=idx(BLOCAGES, default.get("blocage_principal", BLOCAGES[0])), key=f"{key_prefix}_blocage")
-        concurrent = st.text_input("Concurrent", value=default.get("concurrent", ""), key=f"{key_prefix}_concurrent")
-    with col3:
-        vn_parc = st.text_input("VN / Parc", value=default.get("vn_parc", ""), key=f"{key_prefix}_vnparc")
-        duree_mois = st.number_input("Durée (mois)", min_value=0, step=1, value=safe_int(default.get("duree_mois"), 0), key=f"{key_prefix}_duree")
-        km_an = st.number_input("Km/an", min_value=0, step=1000, value=safe_int(default.get("km_an"), 0), key=f"{key_prefix}_km")
-        loyer_mensuel = st.number_input("Loyer mensuel €", min_value=0.0, step=10.0, value=safe_float(default.get("loyer_mensuel"), 0.0), key=f"{key_prefix}_loyer")
-        contrat_bdc = st.text_input("Contrat / BDC", value=default.get("contrat_bdc", ""), key=f"{key_prefix}_contrat")
+    onglet_infos, onglet_notes = st.tabs(["Informations", "Notes"])
+    with onglet_infos:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            client_choice = st.selectbox("Client lié", client_labels, index=default_client_index, key=f"{key_prefix}_client")
+            priorite = st.selectbox("Priorité", PRIORITES, index=idx(PRIORITES, default.get("priorite", PRIORITES[1]), 1), key=f"{key_prefix}_priorite")
+            date_creation = st.text_input("Date de création (vide = aujourd'hui)", value=display_date(default.get("date_creation")) or datetime.now().strftime("%d/%m/%Y"), key=f"{key_prefix}_date_creation")
+            commercial_assigne = st.text_input("Commercial assigné", value=default.get("commercial_assigne", "Louis"), key=f"{key_prefix}_commercial")
+            type_opportunite = st.selectbox("Type opportunité", TYPES_OPP, index=idx(TYPES_OPP, default.get("type_opportunite", TYPES_OPP[0])), key=f"{key_prefix}_type")
+            statut = st.selectbox("Statut", STATUTS, index=idx(STATUTS, default.get("statut", STATUTS[0])), key=f"{key_prefix}_statut")
+        with col2:
+            gamme = st.selectbox("Gamme", GAMMES, index=idx(GAMMES, default.get("gamme", GAMMES[0])), key=f"{key_prefix}_gamme")
+            carrosserie = st.selectbox("Carrosserie", CARROSSERIES, index=idx(CARROSSERIES, default.get("carrosserie", CARROSSERIES[0])), key=f"{key_prefix}_carrosserie")
+            energie = st.selectbox("Énergie", ENERGIES, index=idx(ENERGIES, default.get("energie", ENERGIES[0])), key=f"{key_prefix}_energie")
+            action_suivante = st.selectbox("Action suivante", ACTIONS, index=idx(ACTIONS, default.get("action_suivante", ACTIONS[0])), key=f"{key_prefix}_action")
+            blocage_principal = st.selectbox("Blocage principal", BLOCAGES, index=idx(BLOCAGES, default.get("blocage_principal", BLOCAGES[0])), key=f"{key_prefix}_blocage")
+            concurrent = st.text_input("Concurrent", value=default.get("concurrent", ""), key=f"{key_prefix}_concurrent")
+        with col3:
+            vn_parc = st.text_input("VN / Parc", value=default.get("vn_parc", ""), key=f"{key_prefix}_vnparc")
+            duree_mois = st.number_input("Durée (mois)", min_value=0, step=1, value=safe_int(default.get("duree_mois"), 0), key=f"{key_prefix}_duree")
+            km_an = st.number_input("Km/an", min_value=0, step=1000, value=safe_int(default.get("km_an"), 0), key=f"{key_prefix}_km")
+            loyer_mensuel = st.number_input("Loyer mensuel €", min_value=0.0, step=10.0, value=safe_float(default.get("loyer_mensuel"), 0.0), key=f"{key_prefix}_loyer")
+            contrat_bdc = st.text_input("Contrat / BDC", value=default.get("contrat_bdc", ""), key=f"{key_prefix}_contrat")
 
-    st.markdown("#### Dates facultatives")
-    d1, d2, d3 = st.columns(3)
-    with d1:
-        date_envoi_proposition = st.text_input("Date envoi proposition", value=display_date(default.get("date_envoi_proposition")), key=f"{key_prefix}_date_envoi")
-    with d2:
-        date_prochaine_action = st.text_input("Date prochaine action", value=display_date(default.get("date_prochaine_action")), key=f"{key_prefix}_date_action")
-    with d3:
-        deadline_ao = st.text_input("Deadline AO", value=display_date(default.get("deadline_ao")), key=f"{key_prefix}_deadline")
+        st.markdown("#### Dates facultatives")
+        d1, d2, d3 = st.columns(3)
+        with d1:
+            date_envoi_proposition = st.text_input("Date envoi proposition", value=display_date(default.get("date_envoi_proposition")), key=f"{key_prefix}_date_envoi")
+        with d2:
+            date_prochaine_action = st.text_input("Date prochaine action", value=display_date(default.get("date_prochaine_action")), key=f"{key_prefix}_date_action")
+        with d3:
+            deadline_ao = st.text_input("Deadline AO", value=display_date(default.get("deadline_ao")), key=f"{key_prefix}_deadline")
 
-    notes = st.text_area("Notes", value=default.get("notes", ""), height=140, key=f"{key_prefix}_notes")
+    with onglet_notes:
+        notes = st.text_area("Notes de l'affaire", value=default.get("notes", ""), height=220, key=f"{key_prefix}_notes")
 
     selected_client_id = None
     if client_choice != "— Aucun client —":
@@ -394,6 +458,108 @@ def affaire_form(clients_df, default=None, key_prefix="affaire"):
         "contrat_bdc": contrat_bdc,
         "notes": notes
     }
+
+
+def section_documents(affaire_id, key_prefix="docs"):
+    st.markdown("### Documents de l'affaire")
+    st.caption("Tu peux y mettre ta proposition, le descriptif du VHL, ou tout autre document utile.")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        uploaded = st.file_uploader(
+            "Ajouter un document",
+            type=None,
+            accept_multiple_files=False,
+            key=f"{key_prefix}_uploader_{affaire_id}"
+        )
+    with col2:
+        type_doc = st.selectbox(
+            "Type de document",
+            ["Proposition", "Descriptif VHL", "Bon de commande", "Autre"],
+            key=f"{key_prefix}_type_{affaire_id}"
+        )
+
+    if st.button("📎 Enregistrer le document", key=f"{key_prefix}_save_{affaire_id}", use_container_width=True):
+        if uploaded is None:
+            st.error("Ajoute d'abord un fichier.")
+        else:
+            save_uploaded_document(affaire_id, uploaded, type_doc)
+            st.success("Document enregistré.")
+            st.rerun()
+
+    docs = fetch_documents_affaire(affaire_id)
+    if docs.empty:
+        st.info("Aucun document sur cette affaire.")
+    else:
+        for _, row in docs.iterrows():
+            with st.container():
+                c1, c2, c3 = st.columns([4, 2, 1])
+                c1.write(f"**{row['nom_document']}**")
+                c2.write(row["type_document"] or "—")
+                try:
+                    with open(row["chemin_fichier"], "rb") as f:
+                        c3.download_button(
+                            "Télécharger",
+                            data=f.read(),
+                            file_name=row["nom_document"],
+                            key=f"download_doc_{row['id']}"
+                        )
+                except Exception:
+                    c3.write("Fichier manquant")
+                if st.button("🗑️ Supprimer", key=f"delete_doc_{row['id']}"):
+                    delete_document(int(row["id"]))
+                    st.success("Document supprimé.")
+                    st.rerun()
+
+
+def page_actions_du_jour():
+    st.title("Actions du jour")
+    affaires = fetch_affaires()
+    if affaires.empty:
+        st.info("Aucune affaire pour le moment.")
+        return
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    overdue = affaires[
+        (affaires["date_prochaine_action"].notna()) &
+        (affaires["date_prochaine_action"] < today) &
+        (~affaires["statut"].isin(list(STATUTS_CLOTURES)))
+    ].copy()
+
+    due_today = affaires[
+        (affaires["date_prochaine_action"] == today) &
+        (~affaires["statut"].isin(list(STATUTS_CLOTURES)))
+    ].copy()
+
+    upcoming = affaires[
+        (affaires["date_prochaine_action"].notna()) &
+        (affaires["date_prochaine_action"] > today) &
+        (~affaires["statut"].isin(list(STATUTS_CLOTURES)))
+    ].copy().sort_values("date_prochaine_action")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("En retard", len(overdue))
+    c2.metric("À faire aujourd'hui", len(due_today))
+    c3.metric("À venir", len(upcoming))
+
+    def render_actions(df, title):
+        st.markdown(f"### {title}")
+        if df.empty:
+            st.info("Rien ici.")
+            return
+        for _, row in df.iterrows():
+            st.markdown(f"""
+            <div class="card">
+                <b>#{row['id']} - {row.get('client_nom') or 'Sans client'}</b><br>
+                {row.get('gamme','')} - {row.get('carrosserie','')} - {row.get('energie','')}<br>
+                Statut : {row.get('statut','')}<br>
+                Action : {row.get('action_suivante','')}<br>
+                Date prochaine action : {display_date(row.get('date_prochaine_action'))}
+            </div>
+            """, unsafe_allow_html=True)
+
+    render_actions(overdue.sort_values("date_prochaine_action"), "Actions en retard")
+    render_actions(due_today.sort_values("id", ascending=False), "Actions du jour")
+    render_actions(upcoming.head(15), "À venir")
 
 
 def page_dashboard():
@@ -501,11 +667,14 @@ def page_affaires():
             st.rerun()
 
         if current_id is not None:
+            section_documents(current_id, key_prefix="create_docs")
             confirm = st.checkbox("Confirmer la suppression de l'affaire", key="confirm_delete_affaire")
             if st.button("🗑️ Supprimer l'affaire", use_container_width=True, key="delete_affaire_btn", disabled=not confirm):
                 delete_affaire(current_id)
                 st.success("Affaire supprimée.")
                 st.rerun()
+        else:
+            st.info("Enregistre d'abord l'affaire pour pouvoir ajouter des documents.")
 
     with onglet_suivi:
         affaires_df = fetch_affaires()
@@ -546,6 +715,8 @@ def page_affaires():
             upsert_affaire(affaire_id, data)
             st.success("Affaire mise à jour.")
             st.rerun()
+
+        section_documents(affaire_id, key_prefix="follow_docs")
 
         confirm = st.checkbox("Confirmer la suppression du dossier", key="confirm_delete_affaire_follow")
         if st.button("🗑️ Supprimer ce dossier", use_container_width=True, key="delete_follow_affaire_btn", disabled=not confirm):
@@ -588,13 +759,19 @@ def page_stats():
         use_container_width=True,
         hide_index=True
     )
+    st.caption("Note : les documents ajoutés dans Streamlit Cloud sont stockés dans l'app, mais peuvent être perdus après certains redéploiements/redémarrages.")
 
 
 def main():
     init_db()
-    menu = st.sidebar.radio("Navigation", ["🏠 Tableau de bord", "📂 Affaires", "🏢 Clients", "📊 Statistiques"])
+    menu = st.sidebar.radio(
+        "Navigation",
+        ["🏠 Tableau de bord", "📅 Actions du jour", "📂 Affaires", "🏢 Clients", "📊 Statistiques"]
+    )
     if menu == "🏠 Tableau de bord":
         page_dashboard()
+    elif menu == "📅 Actions du jour":
+        page_actions_du_jour()
     elif menu == "📂 Affaires":
         page_affaires()
     elif menu == "🏢 Clients":
