@@ -706,7 +706,13 @@ def page_affairs():
         with st.form('affair_form'):
             c1, c2, c3 = st.columns(3)
             with c1:
-                client_name = st.selectbox('Client lié', clients['name'].tolist() if not clients.empty else [], index=(clients[clients['id'] == current.get('client_id')].index[0] if current.get('client_id') in set(clients['id']) else 0) if not clients.empty else None)
+                client_options = clients['name'].tolist() if not clients.empty else ['Aucun client']
+                client_index = 0
+                if not clients.empty and current.get('client_id') in set(clients['id']):
+                    matching_rows = clients.index[clients['id'] == current.get('client_id')].tolist()
+                    if matching_rows:
+                        client_index = int(matching_rows[0])
+                client_name = st.selectbox('Client lié', client_options, index=client_index)
                 priority = st.selectbox('Priorité', PRIORITIES, index=PRIORITIES.index(current.get('priority')) if current.get('priority') in PRIORITIES else 1)
                 created_on = st.date_input('Date de création', value=current.get('created_on') or date.today())
                 assigned_to = st.text_input('Commercial assigné', value=current.get('assigned_to') or 'Louis')
@@ -737,7 +743,7 @@ def page_affairs():
             comments = st.text_area('Commentaires', value=current.get('comments') or '')
             submitted = st.form_submit_button('Enregistrer l’affaire')
             if submitted:
-                client_id = clients[clients['name'] == client_name].iloc[0]['id'] if not clients.empty else None
+                client_id = clients[clients['name'] == client_name].iloc[0]['id'] if (not clients.empty and client_name in clients['name'].tolist()) else None
                 upsert_affair({
                     'id': current.get('id'), 'client_id': client_id, 'priority': priority, 'created_on': created_on,
                     'assigned_to': assigned_to, 'opportunity_type': opportunity_type, 'category': category,
