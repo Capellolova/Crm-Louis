@@ -498,57 +498,68 @@ def section_documents(affaire_id, key_prefix="docs"):
                 st.rerun()
 
 
+
 def page_actions_du_jour():
     st.title("Actions du jour")
+
     affaires = fetch_affaires()
+
     if affaires.empty:
-        st.info("Aucune affaire pour le moment.")
+        st.info("Aucune action pour le moment.")
         return
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    overdue = affaires[
-        (affaires["date_prochaine_action"].notna()) &
-        (affaires["date_prochaine_action"] < today) &
-        (affaires["statut"] != "Perdu")
-    ].copy()
+    today = pd.to_datetime("today").normalize()
+    affaires["_date"] = pd.to_datetime(affaires["date_prochaine_action"], errors="coerce")
 
-    due_today = affaires[
-        (affaires["date_prochaine_action"] == today) &
-        (affaires["statut"] != "Perdu")
-    ].copy()
+    retard = affaires[(affaires["_date"] < today) & (affaires["statut"] != "Perdu")]
+    today_df = affaires[(affaires["_date"] == today) & (affaires["statut"] != "Perdu")]
+    semaine = affaires[(affaires["_date"] > today) & (affaires["_date"] <= today + pd.Timedelta(days=7)) & (affaires["statut"] != "Perdu")]
+    plus_tard = affaires[(affaires["_date"] > today + pd.Timedelta(days=7)) & (affaires["statut"] != "Perdu")]
 
-    upcoming = affaires[
-        (affaires["date_prochaine_action"].notna()) &
-        (affaires["date_prochaine_action"] > today) &
-        (affaires["statut"] != "Perdu")
-    ].copy().sort_values("date_prochaine_action")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🔴 Retard", len(retard))
+    c2.metric("🟠 Aujourd’hui", len(today_df))
+    c3.metric("🟡 Semaine", len(semaine))
+    c4.metric("⚪ Plus tard", len(plus_tard))
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("En retard", len(overdue))
-    c2.metric("À faire aujourd'hui", len(due_today))
-    c3.metric("À venir", len(upcoming))
+    st.markdown("---")
 
-    def render_actions(df, title):
-        st.markdown(f"### {title}")
+    def render_section(df, title, color):
+        st.markdown(f"## {title}")
         if df.empty:
-            st.info("Rien ici.")
+            st.info("Aucune action")
             return
+
+        df = df.sort_values(by=["_date"])
+
         for _, row in df.iterrows():
-            st.markdown(f"""
-            <div class="card">
-                <b>#{row['id']} - {row.get('client_nom') or 'Sans client'}</b><br>
+            affaire_id = int(row["id"])
+            total_est = safe_int(row.get("duree_mois"), 0) * safe_float(row.get("loyer_mensuel"), 0.0)
+
+            st.markdown(f'''
+            <div style="border-left:6px solid {color}; padding:15px; margin-bottom:12px; background:#0f172a; border-radius:8px;">
+                <b>{row.get('client_nom') or 'Sans client'}</b><br>
                 {row.get('gamme','')} - {row.get('carrosserie','')} - {row.get('energie','')}<br>
-                Statut : {row.get('statut','')}<br>
-                Action : {row.get('action_suivante','')}<br>
-                Date prochaine action : {display_date(row.get('date_prochaine_action'))}
+                <b>{row.get('action_suivante','')}</b> — {display_date(row.get('date_prochaine_action'))}<br>
+                Statut : {row.get('statut','')} | {total_est:,.0f} €
             </div>
-            """, unsafe_allow_html=True)
+            '''.replace(",", " "), unsafe_allow_html=True)
 
-    render_actions(overdue.sort_values("date_prochaine_action"), "Actions en retard")
-    render_actions(due_today.sort_values("id", ascending=False), "Actions du jour")
-    render_actions(upcoming.head(15), "À venir")
+            col1, col2 = st.columns(2)
 
+            if col1.button("✔️ Traité", key=f"done_{affaire_id}"):
+                row["date_prochaine_action"] = None
+                upsert_affaire(affaire_id, row.to_dict())
+                st.rerun()
 
+            if col2.button("📂 Ouvrir", key=f"open_{affaire_id}"):
+                st.session_state["last_affaire_id"] = affaire_id
+                st.switch_page("Affaires")
+
+    render_section(retard, "🔴 En retard", "red")
+    render_section(today_df, "🟠 Aujourd’hui", "orange")
+    render_section(semaine, "🟡 Cette semaine", "gold")
+    render_section(plus_tard, "⚪ Plus tard", "gray")
 def page_dashboard():
     st.title("Tableau de bord")
     affaires = fetch_affaires()
