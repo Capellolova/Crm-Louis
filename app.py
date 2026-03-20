@@ -525,8 +525,8 @@ def page_actions_du_jour():
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("🔴 Retard", len(retard))
-    c2.metric("🟠 Aujourd’hui", len(today_df))
-    c3.metric("🟡 Semaine", len(semaine))
+    c2.metric("🔥 Aujourd’hui", len(today_df))
+    c3.metric("📆 Cette semaine", len(semaine))
     c4.metric("⚪ Plus tard", len(plus_tard))
 
     st.markdown("---")
@@ -627,8 +627,8 @@ def page_actions_du_jour():
             st.markdown("---")
 
     render_section(retard, "🔴 En retard", "#ef4444", "#fef2f2", "retard")
-    render_section(today_df, "🟠 Aujourd’hui", "#f59e0b", "#fffbeb", "today")
-    render_section(semaine, "🟡 Cette semaine", "#eab308", "#fefce8", "semaine")
+    render_section(today_df, "🔥 Aujourd’hui", "#f97316", "#fff7ed", "today")
+    render_section(semaine, "📆 Cette semaine", "#eab308", "#fefce8", "semaine")
     render_section(plus_tard, "⚪ Plus tard", "#94a3b8", "#f8fafc", "plus_tard")
 def page_dashboard():
     st.title("Tableau de bord")
