@@ -500,6 +500,7 @@ def section_documents(affaire_id, key_prefix="docs"):
 
 
 
+
 def page_actions_du_jour():
     st.title("Actions du jour")
 
@@ -530,44 +531,78 @@ def page_actions_du_jour():
 
     st.markdown("---")
 
-    def render_section(df, title, color, section_key):
+    def render_section(df, title, color, bg_color, section_key):
         st.markdown(f"## {title}")
         if df.empty:
             st.info("Aucune action")
             return
 
-        # tri par date puis priorité chaude d'abord
         df = df.copy()
         df["_priorite_sort"] = df["priorite"].map({"🔥 Chaud": 0, "⚠️ À suivre": 1, "🧊 Froid": 2}).fillna(9)
         df = df.sort_values(by=["_date", "_priorite_sort", "id"], ascending=[True, True, False])
 
         selected_key = f"actions_selected_{section_key}"
+        plan_key = f"actions_planifier_{section_key}"
 
         for _, row in df.iterrows():
             affaire_id = int(row["id"])
             total_est = safe_int(row.get("duree_mois"), 0) * safe_float(row.get("loyer_mensuel"), 0.0)
 
             st.markdown(f'''
-            <div style="border-left:6px solid {color}; padding:15px; margin-bottom:12px; background:#0b1736; border-radius:10px; color:#ffffff;">
-                <div style="font-weight:700; font-size:18px; color:#ffffff;">{row.get('client_nom') or 'Sans client'}</div>
-                <div style="opacity:0.95; color:#dbeafe;">{row.get('gamme','')} - {row.get('carrosserie','')} - {row.get('energie','')}</div>
-                <div style="margin-top:6px; color:#ffffff;"><b>{row.get('action_suivante','')}</b> — {display_date(row.get('date_prochaine_action')) or 'Sans date'}</div>
-                <div style="opacity:0.95; color:#dbeafe;">Statut : {row.get('statut','')} | Priorité : {row.get('priorite','')} | {total_est:,.0f} €</div>
+            <div style="border-left:6px solid {color}; padding:15px; margin-bottom:12px; background:{bg_color}; border-radius:10px; color:#111827;">
+                <div style="font-weight:700; font-size:18px; color:#111827;">{row.get('client_nom') or 'Sans client'}</div>
+                <div style="color:#334155;">{row.get('gamme','')} - {row.get('carrosserie','')} - {row.get('energie','')}</div>
+                <div style="margin-top:6px; color:#111827;"><b>{row.get('action_suivante','')}</b> — {display_date(row.get('date_prochaine_action')) or 'Sans date'}</div>
+                <div style="color:#334155;">Statut : {row.get('statut','')} | Priorité : {row.get('priorite','')} | {total_est:,.0f} €</div>
             </div>
             '''.replace(",", " "), unsafe_allow_html=True)
 
             b1, b2 = st.columns(2)
             with b1:
                 if st.button("✔️ Traité", key=f"done_{section_key}_{affaire_id}", use_container_width=True):
-                    current = row.to_dict()
-                    current["date_prochaine_action"] = None
-                    upsert_affaire(affaire_id, current)
-                    st.success("Action traitée.")
+                    st.session_state[plan_key] = affaire_id
                     st.rerun()
             with b2:
                 if st.button("📂 Ouvrir la fiche", key=f"open_{section_key}_{affaire_id}", use_container_width=True):
                     current_selected = st.session_state.get(selected_key)
                     st.session_state[selected_key] = None if current_selected == affaire_id else affaire_id
+                    st.rerun()
+
+            # Planification de la prochaine action après "Traité"
+            if st.session_state.get(plan_key) == affaire_id:
+                st.markdown("#### Planifier la prochaine action")
+                with st.form(f"plan_action_{section_key}_{affaire_id}"):
+                    next_action = st.selectbox(
+                        "Action suivante",
+                        ["— Aucune —"] + ACTIONS,
+                        index=0,
+                        key=f"plan_action_select_{section_key}_{affaire_id}"
+                    )
+                    next_date = st.text_input(
+                        "Date prochaine action",
+                        value="",
+                        help="Formats acceptés : JJ/MM/AAAA ou AAAA-MM-JJ",
+                        key=f"plan_action_date_{section_key}_{affaire_id}"
+                    )
+                    p1, p2 = st.columns(2)
+                    save_plan = p1.form_submit_button("💾 Valider", use_container_width=True)
+                    cancel_plan = p2.form_submit_button("Annuler", use_container_width=True)
+
+                if save_plan:
+                    current = row.to_dict()
+                    if next_action == "— Aucune —":
+                        current["action_suivante"] = ""
+                        current["date_prochaine_action"] = None
+                    else:
+                        current["action_suivante"] = next_action
+                        current["date_prochaine_action"] = parse_optional_date_str(next_date)
+                    upsert_affaire(affaire_id, current)
+                    st.session_state[plan_key] = None
+                    st.success("Prochaine action planifiée.")
+                    st.rerun()
+
+                if cancel_plan:
+                    st.session_state[plan_key] = None
                     st.rerun()
 
             if st.session_state.get(selected_key) == affaire_id:
@@ -591,10 +626,10 @@ def page_actions_du_jour():
 
             st.markdown("---")
 
-    render_section(retard, "🔴 En retard", "#ef4444", "retard")
-    render_section(today_df, "🟠 Aujourd’hui", "#f59e0b", "today")
-    render_section(semaine, "🟡 Cette semaine", "#eab308", "semaine")
-    render_section(plus_tard, "⚪ Plus tard", "#9ca3af", "plus_tard")
+    render_section(retard, "🔴 En retard", "#ef4444", "#fef2f2", "retard")
+    render_section(today_df, "🟠 Aujourd’hui", "#f59e0b", "#fffbeb", "today")
+    render_section(semaine, "🟡 Cette semaine", "#eab308", "#fefce8", "semaine")
+    render_section(plus_tard, "⚪ Plus tard", "#94a3b8", "#f8fafc", "plus_tard")
 def page_dashboard():
     st.title("Tableau de bord")
     affaires = fetch_affaires()
